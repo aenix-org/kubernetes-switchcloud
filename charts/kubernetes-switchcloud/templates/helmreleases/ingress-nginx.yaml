@@ -1,0 +1,41 @@
+{{- if and .Values.addons.ingressNginx.enabled .Values._namespace.etcd }}
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: {{ .Release.Name }}-ingress-nginx
+  labels:
+    cozystack.io/repository: system
+    cozystack.io/target-cluster-name: {{ .Release.Name }}
+    sharding.fluxcd.io/key: tenants
+spec:
+  releaseName: ingress-nginx
+  chartRef:
+    kind: ExternalArtifact
+    name: cozystack-kubernetes-application-kubevirt-kubernetes-ingress-nginx
+    namespace: cozy-system
+  kubeConfig:
+    secretRef:
+      name: {{ .Release.Name }}-admin-kubeconfig
+      key: super-admin.svc
+  targetNamespace: cozy-ingress-nginx
+  storageNamespace: cozy-ingress-nginx
+  interval: 5m
+  timeout: 10m
+  install:
+    createNamespace: true
+    remediation:
+      retries: -1
+  upgrade:
+    force: true
+    remediation:
+      retries: -1
+  values:
+    {{- toYaml .Values.addons.ingressNginx.valuesOverride | nindent 4 }}
+  dependsOn:
+  {{- if lookup "helm.toolkit.fluxcd.io/v2" "HelmRelease" .Release.Namespace .Release.Name }}
+  - name: {{ .Release.Name }}
+    namespace: {{ .Release.Namespace }}
+  {{- end }}
+  - name: {{ .Release.Name }}-cilium
+    namespace: {{ .Release.Namespace }}
+{{- end }}

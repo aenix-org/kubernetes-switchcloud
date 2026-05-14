@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: v0.6.8-bootstrap-talos
+  labels:
+    bootstrap-components: talos
+  annotations:
+    provider.cluster.x-k8s.io/compressed: "true"
+binaryData:
+  components: {{ .Files.Get "files/components.gz" | b64enc | quote }}
+data:
+  metadata: {{ .Files.Get "files/metadata.yaml" | quote }}

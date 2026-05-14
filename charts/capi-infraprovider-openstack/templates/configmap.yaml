@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: v0.12.1-infraprovider-openstack
+  labels:
+    infraprovider-components: openstack
+  annotations:
+    provider.cluster.x-k8s.io/compressed: "true"
+binaryData:
+  components: {{ .Files.Get "files/components.gz" | b64enc | quote }}
+data:
+  metadata: {{ .Files.Get "files/metadata.yaml" | quote }}

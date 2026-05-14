@@ -1,0 +1,17 @@
+apiVersion: v2
+name: kubernetes-switchcloud
+description: Managed Kubernetes service on Switch Cloud (OpenStack + Talos)
+type: application
+version: 0.1.0
+appVersion: "1.32.6"
+keywords:
+  - kubernetes
+  - openstack
+  - talos
+  - cluster-api
+home: https://cozystack.io
+sources:
+  - https://github.com/aenix-org/kubernetes-switchcloud
+maintainers:
+  - name: Aenix
+    email: support@aenix.io

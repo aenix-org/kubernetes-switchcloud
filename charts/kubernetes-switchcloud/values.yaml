@@ -1,0 +1,106 @@
+## @section OpenStack credentials
+openstack:
+  ## @param openstack.authURL OpenStack identity endpoint
+  authURL: ""
+  ## @param openstack.regionName OpenStack region
+  regionName: ""
+  ## @param openstack.applicationCredentialID Application credential ID
+  applicationCredentialID: ""
+  ## @param openstack.applicationCredentialSecret Application credential secret
+  applicationCredentialSecret: ""
+  ## @param openstack.cloudName Cloud name used as key in clouds.yaml
+  cloudName: "openstack"
+  ## @param openstack.existingSecret Name of existing Secret with clouds.yaml key (overrides inline credentials)
+  existingSecret: ""
+
+## @section Network
+  ## @param openstack.network.id OpenStack network ID for worker nodes
+  network:
+    id: ""
+
+## @section Kubernetes version
+## @param version Kubernetes version string (e.g. v1.32.6)
+version: "v1.32.6"
+
+## @param talosVersion Talos OS version embedded in the node image
+talosVersion: "v1.10.0"
+
+## @section Control plane
+controlPlane:
+  ## @param controlPlane.replicas Number of Kamaji control plane replicas
+  replicas: 2
+  apiServer:
+    resources:
+      requests:
+        cpu: 500m
+        memory: 512Mi
+      limits:
+        memory: 2Gi
+  controllerManager:
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+      limits:
+        memory: 512Mi
+  scheduler:
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+      limits:
+        memory: 256Mi
+
+## @section Kubernetes API endpoint (optional override)
+## When empty the chart uses the default <release>.<namespace>.svc:6443
+host: ""
+
+## @section Node groups
+## @param nodeGroups Worker node group definitions
+nodeGroups:
+  md0:
+    ## @param nodeGroups.md0.minReplicas Minimum autoscaler replicas
+    minReplicas: 0
+    ## @param nodeGroups.md0.maxReplicas Maximum autoscaler replicas
+    maxReplicas: 10
+    ## @param nodeGroups.md0.flavorName OpenStack Nova flavor name
+    flavorName: "c004r008"
+    ## @param nodeGroups.md0.imageName Glance image name for Talos nodes
+    imageName: "talos-openstack-amd64"
+    ## @param nodeGroups.md0.roles Node roles propagated as labels
+    roles: []
+    ## @param nodeGroups.md0.resources Node CPU/memory (used for kubelet reservations and autoscaler capacity hints)
+    resources:
+      cpu: 4
+      memory: 8Gi
+    ## @param nodeGroups.md0.kubelet Kubelet reservation overrides
+    kubelet:
+      evictionHardMemory: "7%"
+      evictionSoftMemory: "10%"
+    ## @param nodeGroups.md0.securityGroups OpenStack security groups
+    securityGroups:
+      - default
+
+## @section Addons
+addons:
+  certManager:
+    enabled: true
+    valuesOverride: {}
+  cilium:
+    enabled: true
+    valuesOverride: {}
+  ingressNginx:
+    enabled: false
+    valuesOverride: {}
+  metricsServer:
+    enabled: true
+    valuesOverride: {}
+  fluxcd:
+    enabled: false
+    valuesOverride: {}
+
+## @section Internal (injected by cozystack-api)
+_namespace:
+  etcd: ""
+  ingress: ""
+  host: ""

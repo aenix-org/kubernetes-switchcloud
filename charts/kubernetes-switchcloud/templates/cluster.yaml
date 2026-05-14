@@ -1,0 +1,340 @@
+{{/*
+OpenStackMachineTemplate spec fragment used for hash-based immutability.
+Must be defined at file scope (not inside range).
+*/}}
+{{- define "openstackmachinetemplate" -}}
+flavor: {{ .group.flavorName }}
+image:
+  name: {{ .group.imageName }}
+cloudName: {{ $.Values.openstack.cloudName }}
+identityRef:
+  name: {{ include "kubernetes-switchcloud.credentialsSecretName" $ }}
+securityGroups:
+{{- range (.group.securityGroups | default (list "default")) }}
+- filter:
+    name: {{ . }}
+{{- end }}
+{{- end }}
+
+{{- $etcd := .Values._namespace.etcd }}
+{{- $ingress := .Values._namespace.ingress }}
+{{- $host := .Values._namespace.host }}
+{{- $credSecret := include "kubernetes-switchcloud.credentialsSecretName" . }}
+
+{{/*
+Collect names of all OpenStackMachineTemplates rendered this pass for the
+immutable-template preservation logic at the end of this file.
+*/}}
+{{- $openstackMachineTemplateNames := list }}
+
+{{- if not $etcd }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-awaiting-etcd
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    app.kubernetes.io/name: kubernetes-switchcloud
+    app.kubernetes.io/instance: {{ .Release.Name }}
+data:
+  status: "awaiting-etcd"
+  message: |
+    No DataStore is available for this tenant Kubernetes cluster.
+    Set spec.etcd: true on an ancestor Tenant and wait for its HelmRelease
+    to reconcile — this HelmRelease will pick up the DataStore on its next
+    5m reconcile loop and provision the cluster.
+{{- else }}
+---
+{{- if not .Values.openstack.existingSecret }}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ .Release.Name }}-openstack-credentials
+  namespace: {{ .Release.Namespace }}
+type: Opaque
+stringData:
+  clouds.yaml: |
+    clouds:
+      {{ .Values.openstack.cloudName }}:
+        auth:
+          auth_url: {{ .Values.openstack.authURL }}
+          application_credential_id: {{ .Values.openstack.applicationCredentialID }}
+          application_credential_secret: {{ .Values.openstack.applicationCredentialSecret }}
+        auth_type: v3applicationcredential
+        region_name: {{ .Values.openstack.regionName }}
+---
+{{- end }}
+apiVersion: cluster.x-k8s.io/v1beta1
+kind: Cluster
+metadata:
+  name: {{ .Release.Name }}
+  namespace: {{ .Release.Namespace }}
+spec:
+  clusterNetwork:
+    pods:
+      cidrBlocks:
+      - 10.243.0.0/16
+    services:
+      cidrBlocks:
+      - 10.95.0.0/16
+  controlPlaneRef:
+    namespace: {{ .Release.Namespace }}
+    apiVersion: controlplane.cluster.x-k8s.io/v1alpha1
+    kind: KamajiControlPlane
+    name: {{ .Release.Name }}
+  infrastructureRef:
+    apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
+    kind: OpenStackCluster
+    name: {{ .Release.Name }}
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: controlplane.cluster.x-k8s.io/v1alpha1
+kind: KamajiControlPlane
+metadata:
+  name: {{ .Release.Name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    cluster.x-k8s.io/role: control-plane
+  annotations:
+    kamaji.clastix.io/kubeconfig-secret-key: "super-admin.svc"
+spec:
+  apiServer:
+    resources: {{ toYaml .Values.controlPlane.apiServer.resources | nindent 6 }}
+  controllerManager:
+    resources: {{ toYaml .Values.controlPlane.controllerManager.resources | nindent 6 }}
+  scheduler:
+    resources: {{ toYaml .Values.controlPlane.scheduler.resources | nindent 6 }}
+  dataStoreName: "{{ $etcd }}"
+  addons:
+    konnectivity:
+      server:
+        port: 8132
+  kubelet:
+    cgroupfs: systemd
+    preferredAddressTypes:
+    - InternalIP
+    - ExternalIP
+  network:
+    serviceType: ClusterIP
+    ingress:
+      extraAnnotations:
+        nginx.ingress.kubernetes.io/ssl-passthrough: "true"
+      hostname: {{ .Values.host | default (printf "%s.%s" .Release.Name $host) }}:443
+      className: "{{ $ingress }}"
+  deployment:
+    podAdditionalMetadata:
+      labels:
+        policy.cozystack.io/allow-to-etcd: "true"
+  replicas: {{ .Values.controlPlane.replicas }}
+  version: {{ trimPrefix "v" .Values.version }}
+---
+apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
+kind: OpenStackCluster
+metadata:
+  annotations:
+    cluster.x-k8s.io/managed-by: kamaji
+  name: {{ .Release.Name }}
+  namespace: {{ .Release.Namespace }}
+spec:
+  identityRef:
+    name: {{ $credSecret }}
+    cloudName: {{ .Values.openstack.cloudName }}
+  network:
+    id: {{ .Values.openstack.network.id }}
+  apiServerLoadBalancer:
+    enabled: false
+  disableAPIServerFloatingIP: true
+  disableExternalNetwork: true
+{{- range $groupName, $group := .Values.nodeGroups }}
+{{/*
+Compute kubelet reservations:
+  system-reserved and kube-reserved = 5% of effective memory, clamped [256Mi, 1Gi].
+  system-reserved and kube-reserved CPU = 5% of effective CPU, clamped [50m, 500m].
+*/}}
+{{- $effectiveMemory := "" }}
+{{- if and $group.resources $group.resources.memory }}
+{{-   $effectiveMemory = $group.resources.memory | toString }}
+{{- end }}
+{{- $effectiveCpu := "" }}
+{{- if and $group.resources $group.resources.cpu }}
+{{-   $effectiveCpu = $group.resources.cpu | toString }}
+{{- end }}
+{{- $autoReservedMi := 256 }}
+{{- if $effectiveMemory }}
+{{-   $effectiveMemBytes := include "kubernetes-switchcloud.memoryToBytes" $effectiveMemory | float64 }}
+{{-   $effectiveMemMi := divf $effectiveMemBytes 1048576.0 | int }}
+{{-   $fivePercentMi := mulf ($effectiveMemMi | float64) 0.05 | int }}
+{{-   $autoReservedMi = min (max $fivePercentMi 256) 1024 }}
+{{- end }}
+{{- $autoReservedMillicores := 50 }}
+{{- if $effectiveCpu }}
+{{-   $effectiveCpuMillicores := include "kubernetes-switchcloud.cpuToMillicores" $effectiveCpu | int }}
+{{-   $fivePercentMillis := mulf ($effectiveCpuMillicores | float64) 0.05 | int }}
+{{-   $autoReservedMillicores = min (max $fivePercentMillis 50) 500 }}
+{{- end }}
+{{- $kubeletOverride := $group.kubelet | default dict }}
+{{- $systemReservedMemory := $kubeletOverride.systemReservedMemory | default (printf "%dMi" $autoReservedMi) }}
+{{- $kubeReservedMemory := $kubeletOverride.kubeReservedMemory | default (printf "%dMi" $autoReservedMi) }}
+{{- $systemReservedCpu := $kubeletOverride.systemReservedCpu | default (printf "%dm" $autoReservedMillicores) }}
+{{- $kubeReservedCpu := $kubeletOverride.kubeReservedCpu | default (printf "%dm" $autoReservedMillicores) }}
+{{- $evictionHardMemory := $kubeletOverride.evictionHardMemory | default "7%" }}
+{{- $evictionSoftMemory := $kubeletOverride.evictionSoftMemory | default "10%" }}
+{{- $context := deepCopy $ }}
+{{- $_ := set $context "group" $group }}
+{{- $_ := set $context "groupName" $groupName }}
+{{- $templateFields := include "openstackmachinetemplate" $context }}
+{{- $templateHash := $templateFields | sha256sum | trunc 6 }}
+{{- $templateName := printf "%s-%s-%s" $.Release.Name $groupName $templateHash }}
+{{- $openstackMachineTemplateNames = append $openstackMachineTemplateNames $templateName }}
+---
+apiVersion: bootstrap.cluster.x-k8s.io/v1alpha3
+kind: TalosConfigTemplate
+metadata:
+  name: {{ $.Release.Name }}-{{ $groupName }}
+  namespace: {{ $.Release.Namespace }}
+spec:
+  template:
+    spec:
+      generateType: worker
+      talosVersion: {{ $.Values.talosVersion }}
+      configPatches:
+        - op: add
+          path: /machine/kubelet/extraArgs
+          value:
+            system-reserved: "memory={{ $systemReservedMemory }},cpu={{ $systemReservedCpu }}"
+            kube-reserved: "memory={{ $kubeReservedMemory }},cpu={{ $kubeReservedCpu }}"
+            eviction-hard: "memory.available<{{ $evictionHardMemory }},nodefs.available<10%"
+            eviction-soft: "memory.available<{{ $evictionSoftMemory }},nodefs.available<15%"
+            eviction-soft-grace-period: "memory.available=1m30s,nodefs.available=1m30s"
+            enforce-node-allocatable: "pods"
+---
+apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
+kind: OpenStackMachineTemplate
+metadata:
+  name: {{ $templateName }}
+  namespace: {{ $.Release.Namespace }}
+spec:
+  template:
+    spec:
+      {{- $templateFields | nindent 6 }}
+---
+apiVersion: cluster.x-k8s.io/v1beta1
+kind: MachineDeployment
+metadata:
+  name: {{ $.Release.Name }}-{{ $groupName }}
+  namespace: {{ $.Release.Namespace }}
+  annotations:
+    cluster.x-k8s.io/cluster-api-autoscaler-node-group-min-size: "{{ $group.minReplicas }}"
+    cluster.x-k8s.io/cluster-api-autoscaler-node-group-max-size: "{{ $group.maxReplicas }}"
+    {{- if $effectiveMemory }}
+    {{-   $sysBytes := include "kubernetes-switchcloud.memoryToBytes" $systemReservedMemory | float64 }}
+    {{-   $kubeBytes := include "kubernetes-switchcloud.memoryToBytes" $kubeReservedMemory | float64 }}
+    {{-   $evictionBytes := 0.0 }}
+    {{-   if hasSuffix "%" $evictionHardMemory }}
+    {{-     $pct := trimSuffix "%" $evictionHardMemory | float64 }}
+    {{-     $evictionBytes = mulf (include "kubernetes-switchcloud.memoryToBytes" $effectiveMemory | float64) (divf $pct 100.0) }}
+    {{-   else }}
+    {{-     $evictionBytes = include "kubernetes-switchcloud.memoryToBytes" $evictionHardMemory | float64 }}
+    {{-   end }}
+    {{-   $totalReservedBytes := addf (addf $sysBytes $kubeBytes) $evictionBytes }}
+    {{-   $effectiveMemBytes := include "kubernetes-switchcloud.memoryToBytes" $effectiveMemory | float64 }}
+    {{-   $allocatableBytes := subf $effectiveMemBytes $totalReservedBytes }}
+    {{-   $allocatableMi := divf $allocatableBytes 1048576.0 | floor | int }}
+    capacity.cluster-autoscaler.kubernetes.io/memory: "{{ $allocatableMi }}Mi"
+    {{- end }}
+    {{- if $effectiveCpu }}
+    {{-   $sysCpuMillis := include "kubernetes-switchcloud.cpuToMillicores" $systemReservedCpu | float64 }}
+    {{-   $kubeCpuMillis := include "kubernetes-switchcloud.cpuToMillicores" $kubeReservedCpu | float64 }}
+    {{-   $effectiveCpuMillis := include "kubernetes-switchcloud.cpuToMillicores" $effectiveCpu | float64 }}
+    {{-   $allocatableCpuMillis := subf $effectiveCpuMillis (addf $sysCpuMillis $kubeCpuMillis) | ceil | int }}
+    capacity.cluster-autoscaler.kubernetes.io/cpu: "{{ $allocatableCpuMillis }}m"
+    {{- end }}
+spec:
+  clusterName: {{ $.Release.Name }}
+  replicas: 2
+  strategy:
+    rollingUpdate:
+      maxSurge: {{ $group.maxReplicas }}
+      maxUnavailable: 1
+    type: RollingUpdate
+  selector:
+    matchLabels:
+      cluster.x-k8s.io/cluster-name: {{ $.Release.Name }}
+      cluster.x-k8s.io/deployment-name: {{ $.Release.Name }}-{{ $groupName }}
+  template:
+    metadata:
+      labels:
+        cluster.x-k8s.io/cluster-name: {{ $.Release.Name }}
+        cluster.x-k8s.io/deployment-name: {{ $.Release.Name }}-{{ $groupName }}
+        {{- range $group.roles }}
+        node-role.kubernetes.io/{{ . }}: ""
+        {{- end }}
+    spec:
+      bootstrap:
+        configRef:
+          apiVersion: bootstrap.cluster.x-k8s.io/v1alpha3
+          kind: TalosConfigTemplate
+          name: {{ $.Release.Name }}-{{ $groupName }}
+          namespace: {{ $.Release.Namespace }}
+      clusterName: {{ $.Release.Name }}
+      infrastructureRef:
+        apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
+        kind: OpenStackMachineTemplate
+        name: {{ $templateName }}
+        namespace: {{ $.Release.Namespace }}
+      version: {{ $.Values.version }}
+---
+apiVersion: cluster.x-k8s.io/v1beta1
+kind: MachineHealthCheck
+metadata:
+  name: {{ $.Release.Name }}-{{ $groupName }}
+  namespace: {{ $.Release.Namespace }}
+spec:
+  clusterName: {{ $.Release.Name }}
+  maxUnhealthy: 0
+  nodeStartupTimeout: 10m
+  selector:
+    matchLabels:
+      cluster.x-k8s.io/cluster-name: {{ $.Release.Name }}
+      cluster.x-k8s.io/deployment-name: {{ $.Release.Name }}-{{ $groupName }}
+  unhealthyConditions:
+  - type: Ready
+    status: Unknown
+    timeout: 30s
+  - type: Ready
+    status: "False"
+    timeout: 300s
+{{- end }}
+---
+{{- /*
+Preserve OpenStackMachineTemplates still referenced by active MachineSets
+(immutable resources — safe to keep, must not be deleted while in use).
+*/}}
+{{- $mss := (lookup "cluster.x-k8s.io/v1beta1" "MachineSet" $.Release.Namespace "").items }}
+{{- $oldTemplates := dict }}
+{{- range $tpl := (lookup "infrastructure.cluster.x-k8s.io/v1beta1" "OpenStackMachineTemplate" .Release.Namespace "").items }}
+{{- range $or := $tpl.metadata.ownerReferences }}
+{{- if and (eq $or.kind "Cluster") (eq $or.name $.Release.Name) }}
+{{- range $ms := $mss }}
+{{- if and (eq $ms.spec.template.spec.infrastructureRef.kind "OpenStackMachineTemplate") (eq $ms.spec.template.spec.infrastructureRef.name $tpl.metadata.name) }}
+{{- if not (has $tpl.metadata.name $openstackMachineTemplateNames) }}
+{{- $oldTemplates = merge $oldTemplates (dict $tpl.metadata.name $tpl) }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- range $oldTemplates }}
+---
+apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
+kind: OpenStackMachineTemplate
+metadata:
+  name: {{ .metadata.name }}
+  namespace: {{ .metadata.namespace }}
+spec:
+  {{- .spec | toYaml | nindent 2 }}
+{{- end }}
+{{- end }}

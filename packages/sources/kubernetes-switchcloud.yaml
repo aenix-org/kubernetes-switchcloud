@@ -1,0 +1,17 @@
+apiVersion: cozystack.io/v1alpha1
+kind: PackageSource
+metadata:
+  name: kubernetes-switchcloud
+  namespace: cozy-system
+spec:
+  url: oci://docker.io/999669
+  charts:
+    - name: capi-bootstrap-talos
+      version: ">=0.1.0"
+      type: system
+    - name: capi-infraprovider-openstack
+      version: ">=0.1.0"
+      type: system
+    - name: kubernetes-switchcloud
+      version: ">=0.1.0"
+      type: app
