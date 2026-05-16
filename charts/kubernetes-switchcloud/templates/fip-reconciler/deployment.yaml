@@ -60,9 +60,15 @@ spec:
     metadata:
       labels:
         app: {{ .Release.Name }}-fip-reconciler
+        policy.cozystack.io/allow-to-apiserver: "true"
     spec:
       enableServiceLinks: false
       serviceAccountName: {{ .Release.Name }}-fip-reconciler
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        seccompProfile:
+          type: RuntimeDefault
       terminationGracePeriodSeconds: 10
       tolerations:
         - key: CriticalAddonsOnly
@@ -83,6 +89,11 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.namespace
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            readOnlyRootFilesystem: true
           resources:
             requests:
               cpu: 25m
