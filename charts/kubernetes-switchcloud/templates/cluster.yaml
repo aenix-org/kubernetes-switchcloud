@@ -243,6 +243,12 @@ spec:
         - op: replace
           path: /machine/features/hostDNS/forwardKubeDNSToHost
           value: false
+        - op: add
+          path: /machine/kernel
+          value:
+            modules:
+              - name: spl
+              - name: zfs
         {{- $kamajiCA := lookup "v1" "Secret" $.Release.Namespace (printf "%s-ca" $.Release.Name) }}
         {{- if and $kamajiCA $kamajiCA.data (index $kamajiCA.data "tls.crt") }}
         - op: replace
