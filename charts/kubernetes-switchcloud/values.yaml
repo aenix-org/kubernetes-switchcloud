@@ -107,7 +107,7 @@ addons:
 ## and calls Neutron directly to associate the FIP with the VM's internal port.
 fipReconciler:
   ## @param fipReconciler.image Container image for the FIP reconciler
-  image: "ghcr.io/aenix-org/kubernetes-switchcloud/fip-reconciler:latest"
+  image: "docker.io/999669/fip-reconciler:latest"
   ## @param fipReconciler.interval Polling interval for checking FloatingIPError
   interval: "30s"
 
