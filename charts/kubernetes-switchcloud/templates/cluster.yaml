@@ -5,10 +5,24 @@ Must be defined at file scope (not inside range).
 {{- define "openstackmachinetemplate" -}}
 flavor: {{ .group.flavorName }}
 image:
-  name: {{ .group.imageName }}
-cloudName: {{ $.Values.openstack.cloudName }}
+  filter:
+    name: {{ .group.imageName }}
 identityRef:
   name: {{ include "kubernetes-switchcloud.credentialsSecretName" $ }}
+  cloudName: {{ $.Values.openstack.cloudName }}
+{{- if .group.rootVolume }}
+rootVolume:
+  sizeGiB: {{ .group.rootVolume.sizeGiB }}
+  {{- if .group.rootVolume.type }}
+  type: {{ .group.rootVolume.type }}
+  {{- end }}
+{{- end }}
+{{- if $.Values.openstack.floatingIPNetwork }}
+floatingIPPoolRef:
+  apiGroup: infrastructure.cluster.x-k8s.io
+  kind: OpenStackFloatingIPPool
+  name: {{ include "kubernetes-switchcloud.floatingIPPoolName" $ }}
+{{- end }}
 securityGroups:
 {{- range (.group.securityGroups | default (list "default")) }}
 - filter:
@@ -133,8 +147,6 @@ spec:
 apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
 kind: OpenStackCluster
 metadata:
-  annotations:
-    cluster.x-k8s.io/managed-by: kamaji
   name: {{ .Release.Name }}
   namespace: {{ .Release.Namespace }}
 spec:
@@ -147,6 +159,22 @@ spec:
     enabled: false
   disableAPIServerFloatingIP: true
   disableExternalNetwork: true
+{{- if .Values.openstack.floatingIPNetwork }}
+---
+apiVersion: infrastructure.cluster.x-k8s.io/v1alpha1
+kind: OpenStackFloatingIPPool
+metadata:
+  name: {{ include "kubernetes-switchcloud.floatingIPPoolName" . }}
+  namespace: {{ .Release.Namespace }}
+spec:
+  identityRef:
+    name: {{ $credSecret }}
+    cloudName: {{ .Values.openstack.cloudName }}
+  floatingIPNetwork:
+    filter:
+      name: {{ .Values.openstack.floatingIPNetwork }}
+  reclaimPolicy: Delete
+{{- end }}
 {{- range $groupName, $group := .Values.nodeGroups }}
 {{/*
 Compute kubelet reservations:
@@ -253,7 +281,6 @@ metadata:
     {{- end }}
 spec:
   clusterName: {{ $.Release.Name }}
-  replicas: 2
   strategy:
     rollingUpdate:
       maxSurge: {{ $group.maxReplicas }}

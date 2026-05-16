@@ -41,8 +41,8 @@ spec:
       retries: -1
   values:
     {{- toYaml (deepCopy .Values.addons.cilium.valuesOverride | mergeOverwrite (fromYaml (include "kubernetes-switchcloud.defaultCiliumValues" .))) | nindent 4 }}
-  dependsOn:
   {{- if lookup "helm.toolkit.fluxcd.io/v2" "HelmRelease" .Release.Namespace .Release.Name }}
+  dependsOn:
   - name: {{ .Release.Name }}
     namespace: {{ .Release.Namespace }}
   {{- end }}

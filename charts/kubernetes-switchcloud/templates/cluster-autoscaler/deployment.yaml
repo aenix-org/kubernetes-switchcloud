@@ -27,7 +27,7 @@ spec:
       initContainers:
       {{- include "kubernetes-switchcloud.waitForAdminKubeconfig" $ | nindent 6 }}
       containers:
-      - image: "docker.io/registry.k8s.io/autoscaling/cluster-autoscaler:v1.32.0"
+      - image: "registry.k8s.io/autoscaling/cluster-autoscaler:v1.32.0"
         name: cluster-autoscaler
         resources:
           limits:

@@ -5,6 +5,9 @@ openstack:
   applicationCredentialSecret: "<your-app-cred-secret>"
   network:
     id: "80dcf0aa-9525-4a4f-b5ec-91e3d4cfd0ce"
+  # floatingIPNetwork enables automatic Floating IP allocation per worker node.
+  # Required for internet access and Kilo WireGuard mesh.
+  floatingIPNetwork: "public"
 
 version: "v1.32.6"
 talosVersion: "v1.10.0"
