@@ -65,8 +65,12 @@ jobs:
               --username "${{ secrets.DOCKERHUB_USERNAME }}" \
               --password-stdin
 
-      - name: Package chart
-        run: helm package charts/kubernetes-switchcloud/ --destination _dist/
+      - name: Package charts
+        run: |
+          helm package charts/kubernetes-switchcloud/ --destination _dist/
+          helm package charts/provider-id-setter/ --destination _dist/
 
-      - name: Push chart
-        run: helm push _dist/kubernetes-switchcloud-*.tgz oci://registry-1.docker.io/999669
+      - name: Push charts
+        run: |
+          helm push _dist/kubernetes-switchcloud-*.tgz oci://registry-1.docker.io/999669
+          helm push _dist/provider-id-setter-*.tgz oci://registry-1.docker.io/999669

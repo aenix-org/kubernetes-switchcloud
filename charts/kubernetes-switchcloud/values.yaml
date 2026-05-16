@@ -98,6 +98,13 @@ addons:
   fluxcd:
     enabled: false
     valuesOverride: {}
+  providerIdSetter:
+    enabled: false
+    ## @param addons.providerIdSetter.chartURL OCI URL of the provider-id-setter Helm chart
+    chartURL: oci://registry-1.docker.io/999669/provider-id-setter
+    ## @param addons.providerIdSetter.chartVersion Chart version tag to pull
+    chartVersion: "0.1.1"
+    valuesOverride: {}
 
 ## @section FIP Reconciler
 ## Works around CAPO v0.12.x limitation on shared-router OpenStack topologies
