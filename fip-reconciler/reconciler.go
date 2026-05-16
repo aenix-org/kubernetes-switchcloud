@@ -22,7 +22,7 @@ var (
 	}
 	ipAddressGVR = schema.GroupVersionResource{
 		Group:    "ipam.cluster.x-k8s.io",
-		Version:  "v1alpha1",
+		Version:  "v1beta1",
 		Resource: "ipaddresses",
 	}
 )
