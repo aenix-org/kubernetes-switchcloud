@@ -237,6 +237,13 @@ spec:
             eviction-soft: "memory.available<{{ $evictionSoftMemory }},nodefs.available<15%"
             eviction-soft-grace-period: "memory.available=1m30s,nodefs.available=1m30s"
             enforce-node-allocatable: "pods"
+        {{- $talosSecret := lookup "v1" "Secret" $.Release.Namespace (printf "%s-talos" $.Release.Name) }}
+        {{- if and $talosSecret $talosSecret.data }}
+        {{- $bundle := index $talosSecret.data "bundle" | b64dec | fromYaml }}
+        - op: add
+          path: /machine/ca/key
+          value: {{ index $bundle "certs" "os" "key" }}
+        {{- end }}
 ---
 apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
 kind: OpenStackMachineTemplate
