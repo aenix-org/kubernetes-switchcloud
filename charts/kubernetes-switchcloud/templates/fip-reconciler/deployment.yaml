@@ -25,6 +25,7 @@ rules:
       - ipam.cluster.x-k8s.io
     resources:
       - ipaddresses
+      - ipaddressclaims
     verbs:
       - get
       - list

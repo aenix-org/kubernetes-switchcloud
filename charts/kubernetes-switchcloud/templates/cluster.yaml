@@ -237,12 +237,17 @@ spec:
             eviction-soft: "memory.available<{{ $evictionSoftMemory }},nodefs.available<15%"
             eviction-soft-grace-period: "memory.available=1m30s,nodefs.available=1m30s"
             enforce-node-allocatable: "pods"
-        {{- $talosSecret := lookup "v1" "Secret" $.Release.Namespace (printf "%s-talos" $.Release.Name) }}
-        {{- if and $talosSecret $talosSecret.data }}
-        {{- $bundle := index $talosSecret.data "bundle" | b64dec | fromYaml }}
-        - op: add
-          path: /machine/ca/key
-          value: {{ index $bundle "certs" "os" "key" }}
+        - op: replace
+          path: /machine/features/kubePrism/enabled
+          value: false
+        - op: replace
+          path: /machine/features/hostDNS/forwardKubeDNSToHost
+          value: false
+        {{- $kamajiCA := lookup "v1" "Secret" $.Release.Namespace (printf "%s-ca" $.Release.Name) }}
+        {{- if and $kamajiCA $kamajiCA.data (index $kamajiCA.data "tls.crt") }}
+        - op: replace
+          path: /cluster/ca/crt
+          value: {{ index $kamajiCA.data "tls.crt" }}
         {{- end }}
 ---
 apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
@@ -328,7 +333,7 @@ metadata:
 spec:
   clusterName: {{ $.Release.Name }}
   maxUnhealthy: 0
-  nodeStartupTimeout: 10m
+  nodeStartupTimeout: {{ $group.nodeStartupTimeout | default "10m" }}
   selector:
     matchLabels:
       cluster.x-k8s.io/cluster-name: {{ $.Release.Name }}

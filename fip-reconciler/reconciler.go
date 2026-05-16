@@ -25,6 +25,11 @@ var (
 		Version:  "v1beta1",
 		Resource: "ipaddresses",
 	}
+	ipAddressClaimGVR = schema.GroupVersionResource{
+		Group:    "ipam.cluster.x-k8s.io",
+		Version:  "v1beta1",
+		Resource: "ipaddressclaims",
+	}
 )
 
 type Reconciler struct {
@@ -42,11 +47,28 @@ func (r *Reconciler) Reconcile(ctx context.Context) error {
 	}
 
 	var toFix []unstructured.Unstructured
+	var toNudge []unstructured.Unstructured
 	for _, s := range servers.Items {
 		if hasFloatingIPError(&s) {
 			toFix = append(toFix, s)
+		} else if isStuckWaitingForIPClaim(&s) {
+			toNudge = append(toNudge, s)
 		}
 	}
+
+	// Nudge CAPO for servers stuck waiting for IPAddressClaim allocation:
+	// CAPO's cluster-scope watch for ipaddressclaims is forbidden in this environment,
+	// so it never learns when the claim is bound. Patching the annotation re-triggers reconcile.
+	for i := range toNudge {
+		s := &toNudge[i]
+		if err := r.nudgeIfIPClaimBound(ctx, s); err != nil {
+			r.log.Error("failed to nudge stuck server",
+				"server", s.GetName(),
+				"namespace", s.GetNamespace(),
+				"err", err)
+		}
+	}
+
 	if len(toFix) == 0 {
 		r.log.Debug("no OpenStackServers with FloatingIPError")
 		return nil
@@ -68,6 +90,29 @@ func (r *Reconciler) Reconcile(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+// nudgeIfIPClaimBound checks whether the IPAddressClaim for the server is already bound
+// and, if so, patches an annotation to trigger a fresh CAPO reconcile.
+func (r *Reconciler) nudgeIfIPClaimBound(ctx context.Context, server *unstructured.Unstructured) error {
+	name := server.GetName()
+	ns := server.GetNamespace()
+
+	ipClaimName := name + "-floating-ip-address"
+	claim, err := r.kube.Resource(ipAddressClaimGVR).Namespace(ns).Get(ctx, ipClaimName, metav1.GetOptions{})
+	if err != nil {
+		r.log.Debug("IPAddressClaim not found, skipping nudge", "server", name, "claim", ipClaimName)
+		return nil
+	}
+
+	addrRef, _, _ := unstructured.NestedString(claim.Object, "status", "addressRef", "name")
+	if addrRef == "" {
+		r.log.Debug("IPAddressClaim not yet bound, skipping nudge", "server", name)
+		return nil
+	}
+
+	r.log.Info("nudging CAPO: IPAddressClaim bound but server stuck", "server", name, "addressRef", addrRef)
+	return r.triggerCAPOReconcile(ctx, ns, name)
 }
 
 func (r *Reconciler) reconcileServer(ctx context.Context, server *unstructured.Unstructured, neutron *NeutronClient) error {
@@ -141,6 +186,24 @@ func (r *Reconciler) triggerCAPOReconcile(ctx context.Context, ns, name string) 
 		ctx, name, types.MergePatchType, data, metav1.PatchOptions{},
 	)
 	return err
+}
+
+// isStuckWaitingForIPClaim returns true when an OpenStackServer has no conditions yet
+// (CAPO hasn't progressed past the IPAddressClaim wait) and has no resources created.
+// This happens when CAPO's cluster-scope watch for ipaddressclaims is forbidden and
+// it never learns that the claim was bound.
+func isStuckWaitingForIPClaim(server *unstructured.Unstructured) bool {
+	conditions, found, _ := unstructured.NestedSlice(server.Object, "status", "conditions")
+	if found && len(conditions) > 0 {
+		return false
+	}
+	resources, found, _ := unstructured.NestedMap(server.Object, "status", "resources")
+	if found && len(resources) > 0 {
+		return false
+	}
+	// Server has floatingIPPoolRef (uses IPAddressClaim flow)
+	_, hasFIPRef, _ := unstructured.NestedString(server.Object, "spec", "floatingIPPoolRef", "name")
+	return hasFIPRef
 }
 
 func hasFloatingIPError(server *unstructured.Unstructured) bool {
