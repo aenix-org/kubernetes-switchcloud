@@ -1,0 +1,104 @@
+{{- if and .Values._namespace.etcd .Values.openstack.floatingIPNetwork }}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ .Release.Name }}-fip-reconciler
+  namespace: {{ .Release.Namespace }}
+---
+kind: Role
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: {{ .Release.Name }}-fip-reconciler
+  namespace: {{ .Release.Namespace }}
+rules:
+  - apiGroups:
+      - infrastructure.cluster.x-k8s.io
+    resources:
+      - openstackservers
+    verbs:
+      - get
+      - list
+      - patch
+      - watch
+  - apiGroups:
+      - ipam.cluster.x-k8s.io
+    resources:
+      - ipaddresses
+    verbs:
+      - get
+      - list
+      - watch
+---
+kind: RoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: {{ .Release.Name }}-fip-reconciler
+  namespace: {{ .Release.Namespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ .Release.Name }}-fip-reconciler
+subjects:
+  - kind: ServiceAccount
+    name: {{ .Release.Name }}-fip-reconciler
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-fip-reconciler
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: {{ .Release.Name }}-fip-reconciler
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: {{ .Release.Name }}-fip-reconciler
+  template:
+    metadata:
+      labels:
+        app: {{ .Release.Name }}-fip-reconciler
+    spec:
+      enableServiceLinks: false
+      serviceAccountName: {{ .Release.Name }}-fip-reconciler
+      terminationGracePeriodSeconds: 10
+      tolerations:
+        - key: CriticalAddonsOnly
+          operator: Exists
+        - key: node-role.kubernetes.io/control-plane
+          operator: Exists
+          effect: NoSchedule
+      containers:
+        - name: fip-reconciler
+          image: {{ .Values.fipReconciler.image }}
+          args:
+            - --clouds-yaml=/etc/openstack/clouds.yaml
+            - --cloud-name={{ .Values.openstack.cloudName }}
+            - --namespace=$(POD_NAMESPACE)
+            - --interval={{ .Values.fipReconciler.interval }}
+          env:
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+          resources:
+            requests:
+              cpu: 25m
+              memory: 32Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi
+          volumeMounts:
+            - name: openstack-credentials
+              mountPath: /etc/openstack
+              readOnly: true
+      volumes:
+        - name: openstack-credentials
+          secret:
+            secretName: {{ include "kubernetes-switchcloud.credentialsSecretName" . }}
+            items:
+              - key: clouds.yaml
+                path: clouds.yaml
+{{- end }}
