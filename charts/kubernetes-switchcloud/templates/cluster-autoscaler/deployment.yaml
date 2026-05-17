@@ -1,9 +1,10 @@
-{{- if .Values._namespace.etcd }}
+{{- if and .Values.addons.clusterAutoscaler.enabled .Values._namespace.etcd }}
 ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: {{ .Release.Name }}-cluster-autoscaler
+  namespace: {{ .Release.Namespace }}
   labels:
     app: {{ .Release.Name }}-cluster-autoscaler
 spec:
@@ -27,7 +28,7 @@ spec:
       initContainers:
       {{- include "kubernetes-switchcloud.waitForAdminKubeconfig" $ | nindent 6 }}
       containers:
-      - image: "registry.k8s.io/autoscaling/cluster-autoscaler:v1.32.0"
+      - image: {{ .Values.addons.clusterAutoscaler.image | quote }}
         name: cluster-autoscaler
         resources:
           limits:
@@ -43,8 +44,10 @@ spec:
         - --enforce-node-group-min-size=true
         - --ignore-daemonsets-utilization=true
         - --ignore-mirror-pods-utilization=true
-        - --scale-down-unneeded-time=30s
-        - --scan-interval=25s
+        - --scale-down-delay-after-add={{ .Values.addons.clusterAutoscaler.scaleDownDelayAfterAdd }}
+        - --scale-down-unneeded-time={{ .Values.addons.clusterAutoscaler.scaleDownUnneededTime }}
+        - --max-node-provision-time={{ .Values.addons.clusterAutoscaler.maxNodeProvisionTime }}
+        - --scan-interval=10s
         - --force-delete-unregistered-nodes=true
         - --kubeconfig=/etc/kubernetes/kubeconfig/super-admin.svc
         - --clusterapi-cloud-config-authoritative
@@ -61,28 +64,17 @@ spec:
       serviceAccountName: {{ .Release.Name }}-cluster-autoscaler
       terminationGracePeriodSeconds: 10
 ---
-kind: RoleBinding
-apiVersion: rbac.authorization.k8s.io/v1
-metadata:
-  name: {{ .Release.Name }}-cluster-autoscaler
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: Role
-  name: {{ .Release.Name }}-cluster-autoscaler
-subjects:
-- kind: ServiceAccount
-  name: {{ .Release.Name }}-cluster-autoscaler
-  namespace: {{ .Release.Namespace }}
----
 apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: {{ .Release.Name }}-cluster-autoscaler
+  namespace: {{ .Release.Namespace }}
 ---
 kind: Role
 apiVersion: rbac.authorization.k8s.io/v1
 metadata:
   name: {{ .Release.Name }}-cluster-autoscaler
+  namespace: {{ .Release.Namespace }}
 rules:
   - apiGroups:
     - cluster.x-k8s.io
@@ -106,4 +98,18 @@ rules:
     - list
     - update
     - watch
+---
+kind: RoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: {{ .Release.Name }}-cluster-autoscaler
+  namespace: {{ .Release.Namespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ .Release.Name }}-cluster-autoscaler
+subjects:
+- kind: ServiceAccount
+  name: {{ .Release.Name }}-cluster-autoscaler
+  namespace: {{ .Release.Namespace }}
 {{- end }}

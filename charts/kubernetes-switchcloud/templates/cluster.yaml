@@ -338,7 +338,7 @@ metadata:
   namespace: {{ $.Release.Namespace }}
 spec:
   clusterName: {{ $.Release.Name }}
-  maxUnhealthy: 0
+  maxUnhealthy: {{ $group.maxUnhealthy | default 1 }}
   nodeStartupTimeout: {{ $group.nodeStartupTimeout | default "10m" }}
   selector:
     matchLabels:
