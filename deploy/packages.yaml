@@ -1,0 +1,24 @@
+---
+apiVersion: cozystack.io/v1alpha1
+kind: Package
+metadata:
+  name: cozystack.capi-provider-bootstrap-talos
+  namespace: cozy-system
+spec:
+  variant: default
+---
+apiVersion: cozystack.io/v1alpha1
+kind: Package
+metadata:
+  name: cozystack.capi-provider-infra-openstack
+  namespace: cozy-system
+spec:
+  variant: default
+---
+apiVersion: cozystack.io/v1alpha1
+kind: Package
+metadata:
+  name: cozystack.kubernetes-switchcloud
+  namespace: cozy-system
+spec:
+  variant: default

@@ -5,3 +5,4 @@ resources:
   - packagesources/capi-provider-bootstrap-talos.yaml
   - packagesources/capi-provider-infra-openstack.yaml
   - packagesources/kubernetes-switchcloud.yaml
+  - packages.yaml

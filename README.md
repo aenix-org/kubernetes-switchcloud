@@ -97,8 +97,11 @@ This installs:
 
 - `OCIRepository` pointing to the published OCI artifact
 - `PackageSource` CRDs for the CAPI providers and `kubernetes-switchcloud`
-- `ApplicationDefinition` for `KubernetesSwitchcloud` (via the `kubernetes-switchcloud-rd`
-  component with `install` section)
+- `Package` CRDs that tell the Cozystack operator to activate each package:
+  - `cozystack.capi-provider-bootstrap-talos` — Talos bootstrap provider
+  - `cozystack.capi-provider-infra-openstack` — OpenStack infrastructure provider
+  - `cozystack.kubernetes-switchcloud` — installs the `ApplicationDefinition` for
+    `KubernetesSwitchcloud` and makes the resource type available in the dashboard
 
 After a successful sync, the `KubernetesSwitchcloud` resource type appears in the
 Cozystack dashboard under **IaaS**.
