@@ -1,0 +1,14 @@
+---
+# Apply to the client's Cozystack management cluster (cozy-system namespace).
+# After applying, the PackageSources in deploy/packagesources/ become available
+# in the Cozystack dashboard.
+apiVersion: source.toolkit.fluxcd.io/v1beta2
+kind: OCIRepository
+metadata:
+  name: kubernetes-switchcloud-packages
+  namespace: cozy-system
+spec:
+  interval: 1h
+  url: oci://registry-1.docker.io/999669/cozy-kubernetes-switchcloud
+  ref:
+    tag: "latest"

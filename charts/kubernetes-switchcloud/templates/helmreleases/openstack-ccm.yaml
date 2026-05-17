@@ -1,0 +1,82 @@
+{{- if and (.Values.addons.openstackCCM | default dict).enabled .Values._namespace.etcd }}
+{{- $minor := regexFind "\\.[0-9]+" (regexFind "^v?[0-9]+\\.[0-9]+" .Values.version) | trimPrefix "." }}
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmRepository
+metadata:
+  name: {{ .Release.Name }}-cpo
+  namespace: {{ .Release.Namespace }}
+  labels:
+    cozystack.io/target-cluster-name: {{ .Release.Name }}
+spec:
+  interval: 1h
+  url: https://kubernetes.github.io/cloud-provider-openstack
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: {{ .Release.Name }}-openstack-ccm
+  labels:
+    cozystack.io/target-cluster-name: {{ .Release.Name }}
+    sharding.fluxcd.io/key: tenants
+spec:
+  releaseName: openstack-cloud-controller-manager
+  chart:
+    spec:
+      chart: openstack-cloud-controller-manager
+      version: "2.{{ $minor }}.x"
+      sourceRef:
+        kind: HelmRepository
+        name: {{ .Release.Name }}-cpo
+        namespace: {{ .Release.Namespace }}
+  kubeConfig:
+    secretRef:
+      name: {{ .Release.Name }}-admin-kubeconfig
+      key: super-admin.svc
+  targetNamespace: kube-system
+  storageNamespace: kube-system
+  interval: 5m
+  timeout: 10m
+  install:
+    createNamespace: false
+    remediation:
+      retries: -1
+  upgrade:
+    remediation:
+      retries: -1
+  values:
+    cluster:
+      name: {{ .Release.Name }}
+    nodeSelector: null
+    tolerations:
+      - key: node.cloudprovider.kubernetes.io/uninitialized
+        value: "true"
+        effect: NoSchedule
+      - key: node-role.kubernetes.io/control-plane
+        effect: NoSchedule
+      - key: CriticalAddonsOnly
+        operator: Exists
+    extraVolumes: []
+    extraVolumeMounts: []
+    cloudConfig:
+      global:
+        auth-url: {{ .Values.openstack.authURL | quote }}
+        application-credential-id: {{ .Values.openstack.applicationCredentialID | quote }}
+        application-credential-secret: {{ .Values.openstack.applicationCredentialSecret | quote }}
+        region: {{ .Values.openstack.regionName | quote }}
+      loadBalancer:
+        use-octavia: true
+        {{- if .Values.openstack.floatingIPNetwork }}
+        floating-network-id: {{ .Values.openstack.floatingIPNetwork | quote }}
+        {{- end }}
+    {{- with .Values.addons.openstackCCM.valuesOverride }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  dependsOn:
+  {{- if lookup "helm.toolkit.fluxcd.io/v2" "HelmRelease" .Release.Namespace .Release.Name }}
+  - name: {{ .Release.Name }}
+    namespace: {{ .Release.Namespace }}
+  {{- end }}
+  - name: {{ .Release.Name }}-cilium
+    namespace: {{ .Release.Namespace }}
+{{- end }}

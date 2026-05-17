@@ -12,6 +12,8 @@ openstack:
   cloudName: "openstack"
   ## @param openstack.existingSecret Name of existing Secret with clouds.yaml key (overrides inline credentials)
   existingSecret: ""
+  ## @param openstack.floatingIPNetwork Name of the external network for Floating IPs (leave empty to disable FIPs — outbound internet works via SNAT)
+  floatingIPNetwork: ""
 
 ## @section Network
   ## @param openstack.network.id OpenStack network ID for worker nodes
@@ -98,6 +100,39 @@ addons:
   fluxcd:
     enabled: false
     valuesOverride: {}
+  providerIdSetter:
+    enabled: false
+    ## @param addons.providerIdSetter.chartURL OCI URL of the provider-id-setter Helm chart
+    chartURL: oci://registry-1.docker.io/999669/provider-id-setter
+    ## @param addons.providerIdSetter.chartVersion Chart version tag to pull
+    chartVersion: "0.1.1"
+    valuesOverride: {}
+  clusterAutoscaler:
+    enabled: false
+    ## @param addons.clusterAutoscaler.image cluster-autoscaler image (version must match cluster Kubernetes minor)
+    image: "registry.k8s.io/autoscaling/cluster-autoscaler:v1.32.0"
+    ## @param addons.clusterAutoscaler.scaleDownDelayAfterAdd How long after scale-up before scale-down is evaluated
+    scaleDownDelayAfterAdd: "10m"
+    ## @param addons.clusterAutoscaler.scaleDownUnneededTime How long a node must be unneeded before removal
+    scaleDownUnneededTime: "10m"
+    ## @param addons.clusterAutoscaler.maxNodeProvisionTime Maximum time to wait for a new node to become ready
+    maxNodeProvisionTime: "20m"
+  ## @param addons.openstackCCM.enabled Deploy OpenStack Cloud Controller Manager (enables Octavia LoadBalancer without FIP)
+  openstackCCM:
+    enabled: false
+    valuesOverride: {}
+
+## @section FIP Reconciler
+## Works around CAPO v0.12.x limitation on shared-router OpenStack topologies
+## (Switch Cloud): CAPO cannot associate a pre-allocated FIP because it searches
+## for the VM port on the public network, but the VM port lives on the internal
+## network.  The reconciler watches OpenStackServer objects with FloatingIPError
+## and calls Neutron directly to associate the FIP with the VM's internal port.
+fipReconciler:
+  ## @param fipReconciler.image Container image for the FIP reconciler
+  image: "docker.io/999669/fip-reconciler:latest"
+  ## @param fipReconciler.interval Polling interval for checking FloatingIPError
+  interval: "30s"
 
 ## @section Internal (injected by cozystack-api)
 _namespace:

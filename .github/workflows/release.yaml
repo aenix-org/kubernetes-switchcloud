@@ -1,0 +1,175 @@
+name: Release
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+
+jobs:
+  push-fip-reconciler:
+    name: Build and push fip-reconciler image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Compute image tags
+        id: tags
+        run: |
+          SHA="${GITHUB_SHA::8}"
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF#refs/tags/v}"
+            echo "tags=999669/fip-reconciler:${VERSION},999669/fip-reconciler:latest" >> "$GITHUB_OUTPUT"
+          else
+            echo "tags=999669/fip-reconciler:${SHA},999669/fip-reconciler:latest" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: fip-reconciler
+          file: fip-reconciler/Containerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.tags.outputs.tags }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  push-provider-id-setter:
+    name: Build and push provider-id-setter image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Compute image tags
+        id: tags
+        run: |
+          SHA="${GITHUB_SHA::8}"
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF#refs/tags/v}"
+            echo "tags=999669/provider-id-setter:${VERSION},999669/provider-id-setter:latest" >> "$GITHUB_OUTPUT"
+          else
+            echo "tags=999669/provider-id-setter:${SHA},999669/provider-id-setter:latest" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: provider-id-setter
+          file: provider-id-setter/Containerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.tags.outputs.tags }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  push-charts:
+    name: Package and push standalone Helm charts
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+
+      - name: Log in to Docker Hub (OCI)
+        run: |
+          echo "${{ secrets.DOCKERHUB_TOKEN }}" | \
+            helm registry login registry-1.docker.io \
+              --username "${{ secrets.DOCKERHUB_USERNAME }}" \
+              --password-stdin
+
+      - name: Package charts
+        run: |
+          helm package charts/kubernetes-switchcloud/ --destination _dist/
+          helm package charts/provider-id-setter/ --destination _dist/
+
+      - name: Push charts
+        run: |
+          helm push _dist/kubernetes-switchcloud-*.tgz oci://registry-1.docker.io/999669
+          helm push _dist/provider-id-setter-*.tgz oci://registry-1.docker.io/999669
+
+  push-cozystack-packages:
+    name: Build and push Cozystack packages OCI artifact
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Flux CLI
+        uses: fluxcd/flux2/action@main
+
+      - name: Log in to Docker Hub (OCI)
+        run: |
+          echo "${{ secrets.DOCKERHUB_TOKEN }}" | \
+            flux registry login registry-1.docker.io \
+              --username "${{ secrets.DOCKERHUB_USERNAME }}" \
+              --password-stdin
+
+      - name: Compute OCI tag
+        id: tag
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            echo "tag=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${GITHUB_SHA::8}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Assemble Cozystack packages layout
+        run: |
+          mkdir -p _packages/apps _packages/system
+
+          # App package: kubernetes-switchcloud chart with version 0.0.0
+          cp -r charts/kubernetes-switchcloud _packages/apps/kubernetes-switchcloud
+          sed -i 's/^version: .*/version: 0.0.0/' _packages/apps/kubernetes-switchcloud/Chart.yaml
+
+          # System packages: CAPI providers
+          cp -r charts/capi-bootstrap-talos _packages/system/capi-providers-bootstrap-talos
+          cp -r charts/capi-infraprovider-openstack _packages/system/capi-providers-infraprovider-openstack
+
+          # System package: ApplicationDefinition installer for kubernetes-switchcloud
+          cp -r charts/kubernetes-switchcloud-rd _packages/system/kubernetes-switchcloud-rd
+          sed -i 's/^version: .*/version: 0.0.0/' _packages/system/kubernetes-switchcloud-rd/Chart.yaml
+
+      - name: Push Cozystack packages artifact
+        run: |
+          TAG="${{ steps.tag.outputs.tag }}"
+          flux push artifact \
+            oci://registry-1.docker.io/999669/cozy-kubernetes-switchcloud:${TAG} \
+            --path=_packages/ \
+            --source=https://github.com/aenix-org/kubernetes-switchcloud \
+            --revision="${TAG}:${GITHUB_SHA}"
+
+      - name: Tag as latest (on tag push only)
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          TAG="${{ steps.tag.outputs.tag }}"
+          flux tag artifact \
+            oci://registry-1.docker.io/999669/cozy-kubernetes-switchcloud:${TAG} \
+            --tag latest

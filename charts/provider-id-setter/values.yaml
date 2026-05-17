@@ -1,0 +1,6 @@
+image: docker.io/999669/provider-id-setter:latest
+
+# Override the Kubernetes API server URL for multi-cloud setups where the
+# default in-cluster endpoint (kubernetes.default.svc ClusterIP) is not
+# reachable from workload nodes (e.g. Kamaji-hosted control plane).
+apiServerOverride: ""

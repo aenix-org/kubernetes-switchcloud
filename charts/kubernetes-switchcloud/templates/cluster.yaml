@@ -5,10 +5,24 @@ Must be defined at file scope (not inside range).
 {{- define "openstackmachinetemplate" -}}
 flavor: {{ .group.flavorName }}
 image:
-  name: {{ .group.imageName }}
-cloudName: {{ $.Values.openstack.cloudName }}
+  filter:
+    name: {{ .group.imageName }}
 identityRef:
   name: {{ include "kubernetes-switchcloud.credentialsSecretName" $ }}
+  cloudName: {{ $.Values.openstack.cloudName }}
+{{- if .group.rootVolume }}
+rootVolume:
+  sizeGiB: {{ .group.rootVolume.sizeGiB }}
+  {{- if .group.rootVolume.type }}
+  type: {{ .group.rootVolume.type }}
+  {{- end }}
+{{- end }}
+{{- if $.Values.openstack.floatingIPNetwork }}
+floatingIPPoolRef:
+  apiGroup: infrastructure.cluster.x-k8s.io
+  kind: OpenStackFloatingIPPool
+  name: {{ include "kubernetes-switchcloud.floatingIPPoolName" $ }}
+{{- end }}
 securityGroups:
 {{- range (.group.securityGroups | default (list "default")) }}
 - filter:
@@ -102,8 +116,16 @@ metadata:
 spec:
   apiServer:
     resources: {{ toYaml .Values.controlPlane.apiServer.resources | nindent 6 }}
+    {{- if (.Values.addons.openstackCCM | default dict).enabled }}
+    extraArgs:
+      cloud-provider: external
+    {{- end }}
   controllerManager:
     resources: {{ toYaml .Values.controlPlane.controllerManager.resources | nindent 6 }}
+    {{- if (.Values.addons.openstackCCM | default dict).enabled }}
+    extraArgs:
+      cloud-provider: external
+    {{- end }}
   scheduler:
     resources: {{ toYaml .Values.controlPlane.scheduler.resources | nindent 6 }}
   dataStoreName: "{{ $etcd }}"
@@ -133,8 +155,6 @@ spec:
 apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
 kind: OpenStackCluster
 metadata:
-  annotations:
-    cluster.x-k8s.io/managed-by: kamaji
   name: {{ .Release.Name }}
   namespace: {{ .Release.Namespace }}
 spec:
@@ -147,6 +167,22 @@ spec:
     enabled: false
   disableAPIServerFloatingIP: true
   disableExternalNetwork: true
+{{- if .Values.openstack.floatingIPNetwork }}
+---
+apiVersion: infrastructure.cluster.x-k8s.io/v1alpha1
+kind: OpenStackFloatingIPPool
+metadata:
+  name: {{ include "kubernetes-switchcloud.floatingIPPoolName" . }}
+  namespace: {{ .Release.Namespace }}
+spec:
+  identityRef:
+    name: {{ $credSecret }}
+    cloudName: {{ .Values.openstack.cloudName }}
+  floatingIPNetwork:
+    filter:
+      name: {{ .Values.openstack.floatingIPNetwork }}
+  reclaimPolicy: Delete
+{{- end }}
 {{- range $groupName, $group := .Values.nodeGroups }}
 {{/*
 Compute kubelet reservations:
@@ -209,6 +245,27 @@ spec:
             eviction-soft: "memory.available<{{ $evictionSoftMemory }},nodefs.available<15%"
             eviction-soft-grace-period: "memory.available=1m30s,nodefs.available=1m30s"
             enforce-node-allocatable: "pods"
+            {{- if ($.Values.addons.openstackCCM | default dict).enabled }}
+            cloud-provider: "external"
+            {{- end }}
+        - op: replace
+          path: /machine/features/kubePrism/enabled
+          value: false
+        - op: replace
+          path: /machine/features/hostDNS/forwardKubeDNSToHost
+          value: false
+        - op: add
+          path: /machine/kernel
+          value:
+            modules:
+              - name: spl
+              - name: zfs
+        {{- $kamajiCA := lookup "v1" "Secret" $.Release.Namespace (printf "%s-ca" $.Release.Name) }}
+        {{- if and $kamajiCA $kamajiCA.data (index $kamajiCA.data "tls.crt") }}
+        - op: replace
+          path: /cluster/ca/crt
+          value: {{ index $kamajiCA.data "tls.crt" }}
+        {{- end }}
 ---
 apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
 kind: OpenStackMachineTemplate
@@ -253,10 +310,9 @@ metadata:
     {{- end }}
 spec:
   clusterName: {{ $.Release.Name }}
-  replicas: 2
   strategy:
     rollingUpdate:
-      maxSurge: {{ $group.maxReplicas }}
+      maxSurge: 1
       maxUnavailable: 1
     type: RollingUpdate
   selector:
@@ -293,8 +349,8 @@ metadata:
   namespace: {{ $.Release.Namespace }}
 spec:
   clusterName: {{ $.Release.Name }}
-  maxUnhealthy: 0
-  nodeStartupTimeout: 10m
+  maxUnhealthy: {{ $group.maxUnhealthy | default 1 }}
+  nodeStartupTimeout: {{ $group.nodeStartupTimeout | default "10m" }}
   selector:
     matchLabels:
       cluster.x-k8s.io/cluster-name: {{ $.Release.Name }}
@@ -302,7 +358,7 @@ spec:
   unhealthyConditions:
   - type: Ready
     status: Unknown
-    timeout: 30s
+    timeout: 5m
   - type: Ready
     status: "False"
     timeout: 300s

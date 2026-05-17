@@ -1,0 +1,6 @@
+apiVersion: v2
+name: provider-id-setter
+description: DaemonSet that sets spec.providerID on Kubernetes nodes running on OpenStack (Switch Cloud) via IMDS.
+type: application
+version: 0.1.1
+appVersion: "latest"

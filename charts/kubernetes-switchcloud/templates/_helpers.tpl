@@ -23,6 +23,10 @@
 {{- end -}}
 {{- end }}
 
+{{- define "kubernetes-switchcloud.floatingIPPoolName" -}}
+{{ .Release.Name }}-fip-pool
+{{- end }}
+
 {{/*
 wait-for-kubeconfig init container — polls until Kamaji provisions super-admin.svc.
 Deadline is 10m (below the 15m HelmRelease install timeout).
