@@ -1,0 +1,42 @@
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmChart
+metadata:
+  name: kubernetes-switchcloud-app
+  namespace: cozy-public
+spec:
+  interval: 5m
+  chart: ./charts/kubernetes-switchcloud
+  sourceRef:
+    kind: GitRepository
+    name: kubernetes-switchcloud
+    namespace: cozy-public
+  reconcileStrategy: Revision
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmChart
+metadata:
+  name: kubernetes-switchcloud-capi-bootstrap-talos
+  namespace: cozy-public
+spec:
+  interval: 5m
+  chart: ./charts/capi-bootstrap-talos
+  sourceRef:
+    kind: GitRepository
+    name: kubernetes-switchcloud
+    namespace: cozy-public
+  reconcileStrategy: Revision
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmChart
+metadata:
+  name: kubernetes-switchcloud-capi-infraprovider-openstack
+  namespace: cozy-public
+spec:
+  interval: 5m
+  chart: ./charts/capi-infraprovider-openstack
+  sourceRef:
+    kind: GitRepository
+    name: kubernetes-switchcloud
+    namespace: cozy-public
+  reconcileStrategy: Revision

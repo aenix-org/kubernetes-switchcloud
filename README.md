@@ -25,14 +25,11 @@ management cluster by [Kamaji](https://kamaji.clastix.io/).
 ```text
 charts/
   kubernetes-switchcloud/       Main application Helm chart
-  kubernetes-switchcloud-rd/    ApplicationDefinition installer (cozy-system)
   capi-bootstrap-talos/         CAPI bootstrap provider for Talos
   capi-infraprovider-openstack/ CAPI infrastructure provider for OpenStack
   provider-id-setter/           DaemonSet that sets spec.providerID on nodes
-deploy/
-  ocirepository.yaml            FluxCD OCIRepository pointing to the OCI artifact
-  kustomization.yaml            Kustomization that applies the deploy/ directory
-  packagesources/               PackageSource CRDs for Cozystack
+packages/core/platform/         Cozystack platform chart (ApplicationDefinition + HelmReleases)
+init.yaml                       Bootstrap file: apply this once to register the package
 fip-reconciler/                 Go source for the FIP reconciler sidecar
 provider-id-setter/             Go source for the provider-id-setter DaemonSet
 packages/apps/example-values.yaml   Example cluster values
@@ -56,69 +53,45 @@ packages/apps/example-values.yaml   Example cluster values
 
 ## Installation on Cozystack
 
-### 1. Apply the deploy manifests
+### 1. Apply init.yaml
+
+Apply the bootstrap file once. It creates a `GitRepository` in `cozy-public` and
+a `HelmRelease` in `cozy-system` that installs the platform chart:
 
 ```bash
 kubectl --context <management-cluster> apply \
-  --filename https://raw.githubusercontent.com/aenix-org/kubernetes-switchcloud/main/deploy/kustomization.yaml
+  --filename https://raw.githubusercontent.com/aenix-org/kubernetes-switchcloud/main/init.yaml
 ```
 
-Or, for GitOps (recommended), add to your Flux GitRepository and Kustomization:
-
-```yaml
----
-apiVersion: source.toolkit.fluxcd.io/v1
-kind: GitRepository
-metadata:
-  name: kubernetes-switchcloud
-  namespace: cozy-system
-spec:
-  interval: 1h
-  url: https://github.com/aenix-org/kubernetes-switchcloud
-  ref:
-    branch: main
----
-apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata:
-  name: kubernetes-switchcloud-deploy
-  namespace: cozy-system
-spec:
-  interval: 1h
-  sourceRef:
-    kind: GitRepository
-    name: kubernetes-switchcloud
-  path: ./deploy
-  prune: true
-  serviceAccountName: cozystack
-```
+For GitOps (recommended), commit `init.yaml` into your cluster's Flux repository
+(e.g. alongside other cluster-level manifests) and let Flux apply it automatically.
 
 This installs:
 
-- `OCIRepository` pointing to the published OCI artifact
-- `PackageSource` CRDs for the CAPI providers and `kubernetes-switchcloud`
-- `Package` CRDs that tell the Cozystack operator to activate each package:
-  - `cozystack.capi-provider-bootstrap-talos` — Talos bootstrap provider
-  - `cozystack.capi-provider-infra-openstack` — OpenStack infrastructure provider
-  - `cozystack.kubernetes-switchcloud` — installs the `ApplicationDefinition` for
-    `KubernetesSwitchcloud` and makes the resource type available in the dashboard
+- `ApplicationDefinition` for `KubernetesSwitchcloud` — makes the resource type
+  available in the Cozystack dashboard under **IaaS**
+- `HelmRelease` objects for `capi-bootstrap-talos` and `capi-infraprovider-openstack`
+  CAPI providers in the `cozy-cluster-api` namespace
 
 After a successful sync, the `KubernetesSwitchcloud` resource type appears in the
 Cozystack dashboard under **IaaS**.
 
-### 2. Verify the packages are ready
+### 2. Verify the HelmReleases are ready
 
 ```bash
-kubectl --context <management-cluster> get packagesources \
-  --namespace cozy-system | grep switchcloud
+kubectl --context <management-cluster> get helmreleases \
+  --namespace cozy-cluster-api | grep -E "capi-bootstrap-talos|capi-infraprovider-openstack"
+kubectl --context <management-cluster> get applicationdefinitions kubernetes-switchcloud
 ```
 
 Expected output:
 
 ```text
-cozystack.capi-provider-bootstrap-talos    ...   True
-cozystack.capi-provider-infra-openstack    ...   True
-cozystack.kubernetes-switchcloud           ...   True
+capi-bootstrap-talos              True    ...
+capi-infraprovider-openstack      True    ...
+
+NAME                       ...
+kubernetes-switchcloud     ...
 ```
 
 ## Creating a cluster

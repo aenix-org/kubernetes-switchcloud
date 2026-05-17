@@ -1,0 +1,44 @@
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: capi-bootstrap-talos
+  namespace: cozy-cluster-api
+spec:
+  interval: 5m
+  releaseName: capi-bootstrap-talos
+  targetNamespace: cozy-cluster-api
+  chartRef:
+    kind: HelmChart
+    name: kubernetes-switchcloud-capi-bootstrap-talos
+    namespace: cozy-public
+  install:
+    crds: CreateReplace
+    remediation:
+      retries: -1
+  upgrade:
+    crds: CreateReplace
+    remediation:
+      retries: -1
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: capi-infraprovider-openstack
+  namespace: cozy-cluster-api
+spec:
+  interval: 5m
+  releaseName: capi-infraprovider-openstack
+  targetNamespace: cozy-cluster-api
+  chartRef:
+    kind: HelmChart
+    name: kubernetes-switchcloud-capi-infraprovider-openstack
+    namespace: cozy-public
+  install:
+    crds: CreateReplace
+    remediation:
+      retries: -1
+  upgrade:
+    crds: CreateReplace
+    remediation:
+      retries: -1

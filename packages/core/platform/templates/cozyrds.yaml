@@ -3,9 +3,6 @@ kind: ApplicationDefinition
 metadata:
   name: kubernetes-switchcloud
   annotations:
-    # Same rationale as for the standard kubernetes ApplicationDefinition:
-    # Kamaji admin-kubeconfig generation can exceed helm-controller default
-    # wait budget causing remediation loops that destroy the Cluster CR.
     release.cozystack.io/helm-install-timeout: "15m"
 spec:
   application:
@@ -19,9 +16,9 @@ spec:
     labels:
       sharding.fluxcd.io/key: tenants
     chartRef:
-      kind: ExternalArtifact
-      name: cozystack-kubernetes-switchcloud-default-kubernetes-switchcloud
-      namespace: cozy-system
+      kind: HelmChart
+      name: kubernetes-switchcloud-app
+      namespace: cozy-public
   dashboard:
     category: IaaS
     singular: Kubernetes (Switch Cloud)
