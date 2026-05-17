@@ -153,6 +153,10 @@ jobs:
           cp -r charts/capi-bootstrap-talos _packages/system/capi-providers-bootstrap-talos
           cp -r charts/capi-infraprovider-openstack _packages/system/capi-providers-infraprovider-openstack
 
+          # System package: ApplicationDefinition installer for kubernetes-switchcloud
+          cp -r charts/kubernetes-switchcloud-rd _packages/system/kubernetes-switchcloud-rd
+          sed -i 's/^version: .*/version: 0.0.0/' _packages/system/kubernetes-switchcloud-rd/Chart.yaml
+
       - name: Push Cozystack packages artifact
         run: |
           TAG="${{ steps.tag.outputs.tag }}"

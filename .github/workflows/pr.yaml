@@ -35,7 +35,7 @@ jobs:
       - name: Set up Helm
         uses: azure/setup-helm@v4
 
-      - name: Lint
+      - name: Lint kubernetes-switchcloud
         run: |
           helm lint charts/kubernetes-switchcloud/ \
             --set '_namespace.etcd=etcd-test' \
@@ -47,6 +47,9 @@ jobs:
             --set 'openstack.applicationCredentialSecret=test' \
             --set 'openstack.network.id=80dcf0aa-0000' \
             --set 'openstack.floatingIPNetwork=public'
+
+      - name: Lint kubernetes-switchcloud-rd
+        run: helm lint charts/kubernetes-switchcloud-rd/
 
   build-go:
     name: Go build & vet

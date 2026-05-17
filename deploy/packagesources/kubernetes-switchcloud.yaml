@@ -17,5 +17,10 @@ spec:
     - cozystack.capi-provider-core
     - cozystack.capi-provider-cp-kamaji
     components:
+    - name: kubernetes-switchcloud-rd
+      path: system/kubernetes-switchcloud-rd
+      install:
+        namespace: cozy-system
+        releaseName: kubernetes-switchcloud-rd
     - name: kubernetes-switchcloud
       path: apps/kubernetes-switchcloud
