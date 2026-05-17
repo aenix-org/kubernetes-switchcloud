@@ -44,9 +44,9 @@ spec:
         - --enforce-node-group-min-size=true
         - --ignore-daemonsets-utilization=true
         - --ignore-mirror-pods-utilization=true
-        - --scale-down-delay-after-add={{ .Values.addons.clusterAutoscaler.scaleDownDelayAfterAdd }}
-        - --scale-down-unneeded-time={{ .Values.addons.clusterAutoscaler.scaleDownUnneededTime }}
-        - --max-node-provision-time={{ .Values.addons.clusterAutoscaler.maxNodeProvisionTime }}
+        - --scale-down-delay-after-add={{ .Values.addons.clusterAutoscaler.scaleDownDelayAfterAdd | default "10m" }}
+        - --scale-down-unneeded-time={{ .Values.addons.clusterAutoscaler.scaleDownUnneededTime | default "10m" }}
+        - --max-node-provision-time={{ .Values.addons.clusterAutoscaler.maxNodeProvisionTime | default "20m" }}
         - --scan-interval=10s
         - --force-delete-unregistered-nodes=true
         - --kubeconfig=/etc/kubernetes/kubeconfig/super-admin.svc
