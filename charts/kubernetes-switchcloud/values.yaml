@@ -12,6 +12,8 @@ openstack:
   cloudName: "openstack"
   ## @param openstack.existingSecret Name of existing Secret with clouds.yaml key (overrides inline credentials)
   existingSecret: ""
+  ## @param openstack.floatingIPNetwork Name of the external network for Floating IPs (leave empty to disable FIPs — outbound internet works via SNAT)
+  floatingIPNetwork: ""
 
 ## @section Network
   ## @param openstack.network.id OpenStack network ID for worker nodes
