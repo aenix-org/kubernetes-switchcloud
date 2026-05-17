@@ -117,6 +117,10 @@ addons:
     scaleDownUnneededTime: "10m"
     ## @param addons.clusterAutoscaler.maxNodeProvisionTime Maximum time to wait for a new node to become ready
     maxNodeProvisionTime: "20m"
+  ## @param addons.openstackCCM.enabled Deploy OpenStack Cloud Controller Manager (enables Octavia LoadBalancer without FIP)
+  openstackCCM:
+    enabled: false
+    valuesOverride: {}
 
 ## @section FIP Reconciler
 ## Works around CAPO v0.12.x limitation on shared-router OpenStack topologies

@@ -38,4 +38,8 @@ spec:
   {{- end }}
   - name: {{ .Release.Name }}-cilium
     namespace: {{ .Release.Namespace }}
+  {{- if .Values.addons.openstackCCM.enabled }}
+  - name: {{ .Release.Name }}-openstack-ccm
+    namespace: {{ .Release.Namespace }}
+  {{- end }}
 {{- end }}
