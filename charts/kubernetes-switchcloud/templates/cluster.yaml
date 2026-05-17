@@ -116,13 +116,13 @@ metadata:
 spec:
   apiServer:
     resources: {{ toYaml .Values.controlPlane.apiServer.resources | nindent 6 }}
-    {{- if .Values.addons.openstackCCM.enabled }}
+    {{- if (.Values.addons.openstackCCM | default dict).enabled }}
     extraArgs:
       cloud-provider: external
     {{- end }}
   controllerManager:
     resources: {{ toYaml .Values.controlPlane.controllerManager.resources | nindent 6 }}
-    {{- if .Values.addons.openstackCCM.enabled }}
+    {{- if (.Values.addons.openstackCCM | default dict).enabled }}
     extraArgs:
       cloud-provider: external
     {{- end }}
@@ -245,7 +245,7 @@ spec:
             eviction-soft: "memory.available<{{ $evictionSoftMemory }},nodefs.available<15%"
             eviction-soft-grace-period: "memory.available=1m30s,nodefs.available=1m30s"
             enforce-node-allocatable: "pods"
-            {{- if $.Values.addons.openstackCCM.enabled }}
+            {{- if ($.Values.addons.openstackCCM | default dict).enabled }}
             cloud-provider: "external"
             {{- end }}
         - op: replace

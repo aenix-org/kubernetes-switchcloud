@@ -1,4 +1,4 @@
-{{- if and .Values.addons.openstackCCM.enabled .Values._namespace.etcd }}
+{{- if and (.Values.addons.openstackCCM | default dict).enabled .Values._namespace.etcd }}
 {{- $minor := regexFind "\\.[0-9]+" (regexFind "^v?[0-9]+\\.[0-9]+" .Values.version) | trimPrefix "." }}
 ---
 apiVersion: source.toolkit.fluxcd.io/v1
