@@ -312,7 +312,7 @@ spec:
   clusterName: {{ $.Release.Name }}
   strategy:
     rollingUpdate:
-      maxSurge: {{ $group.maxReplicas }}
+      maxSurge: 1
       maxUnavailable: 1
     type: RollingUpdate
   selector:
@@ -358,7 +358,7 @@ spec:
   unhealthyConditions:
   - type: Ready
     status: Unknown
-    timeout: 30s
+    timeout: 5m
   - type: Ready
     status: "False"
     timeout: 300s

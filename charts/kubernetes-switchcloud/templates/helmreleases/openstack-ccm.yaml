@@ -24,7 +24,7 @@ spec:
   chart:
     spec:
       chart: openstack-cloud-controller-manager
-      version: "2.{{ $minor }}.*"
+      version: "2.{{ $minor }}.x"
       sourceRef:
         kind: HelmRepository
         name: {{ .Release.Name }}-cpo
@@ -47,7 +47,7 @@ spec:
   values:
     cluster:
       name: {{ .Release.Name }}
-    nodeSelector: {}
+    nodeSelector: null
     tolerations:
       - key: node.cloudprovider.kubernetes.io/uninitialized
         value: "true"
