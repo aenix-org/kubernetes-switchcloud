@@ -1,4 +1,6 @@
 *.tgz
 charts/*/charts/
+_dist/
+_packages/
 # compiled Go binaries
 fip-reconciler/fip-reconciler
