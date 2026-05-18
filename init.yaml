@@ -1,15 +1,14 @@
 ---
-apiVersion: source.toolkit.fluxcd.io/v1
-kind: GitRepository
+apiVersion: source.toolkit.fluxcd.io/v1beta2
+kind: OCIRepository
 metadata:
-  name: kubernetes-switchcloud
+  name: kubernetes-switchcloud-platform
   namespace: cozy-public
 spec:
-  interval: 1m0s
+  interval: 5m
+  url: oci://ghcr.io/aenix-org/kubernetes-switchcloud-platform
   ref:
-    branch: main
-  timeout: 60s
-  url: https://github.com/aenix-org/kubernetes-switchcloud.git
+    semver: ">=0.1.0"
 ---
 apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
@@ -19,11 +18,7 @@ metadata:
 spec:
   interval: 5m
   targetNamespace: cozy-system
-  chart:
-    spec:
-      chart: ./packages/core/platform
-      sourceRef:
-        kind: GitRepository
-        name: kubernetes-switchcloud
-        namespace: cozy-public
-      reconcileStrategy: Revision
+  chartRef:
+    kind: OCIRepository
+    name: kubernetes-switchcloud-platform
+    namespace: cozy-public

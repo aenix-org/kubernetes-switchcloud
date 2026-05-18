@@ -1,17 +1,27 @@
 ---
+apiVersion: source.toolkit.fluxcd.io/v1beta2
+kind: HelmRepository
+metadata:
+  name: kubernetes-switchcloud
+  namespace: cozy-public
+spec:
+  type: oci
+  url: oci://ghcr.io/aenix-org
+  interval: 5m
+---
 apiVersion: source.toolkit.fluxcd.io/v1
 kind: HelmChart
 metadata:
   name: kubernetes-switchcloud-app
   namespace: cozy-public
 spec:
-  interval: 5m
-  chart: ./charts/kubernetes-switchcloud
+  chart: kubernetes-switchcloud
+  version: "0.3.x"
   sourceRef:
-    kind: GitRepository
+    kind: HelmRepository
     name: kubernetes-switchcloud
     namespace: cozy-public
-  reconcileStrategy: Revision
+  interval: 5m
 ---
 apiVersion: source.toolkit.fluxcd.io/v1
 kind: HelmChart
@@ -19,13 +29,13 @@ metadata:
   name: kubernetes-switchcloud-capi-bootstrap-talos
   namespace: cozy-public
 spec:
-  interval: 5m
-  chart: ./charts/capi-bootstrap-talos
+  chart: capi-bootstrap-talos
+  version: "0.1.x"
   sourceRef:
-    kind: GitRepository
+    kind: HelmRepository
     name: kubernetes-switchcloud
     namespace: cozy-public
-  reconcileStrategy: Revision
+  interval: 5m
 ---
 apiVersion: source.toolkit.fluxcd.io/v1
 kind: HelmChart
@@ -33,13 +43,13 @@ metadata:
   name: kubernetes-switchcloud-capi-infraprovider-openstack
   namespace: cozy-public
 spec:
-  interval: 5m
-  chart: ./charts/capi-infraprovider-openstack
+  chart: capi-infraprovider-openstack
+  version: "0.1.x"
   sourceRef:
-    kind: GitRepository
+    kind: HelmRepository
     name: kubernetes-switchcloud
     namespace: cozy-public
-  reconcileStrategy: Revision
+  interval: 5m
 ---
 apiVersion: source.toolkit.fluxcd.io/v1
 kind: HelmChart
@@ -47,10 +57,10 @@ metadata:
   name: kubernetes-switchcloud-talos-trustd-router
   namespace: cozy-public
 spec:
-  interval: 5m
-  chart: ./charts/talos-trustd-router
+  chart: talos-trustd-router
+  version: "0.1.x"
   sourceRef:
-    kind: GitRepository
+    kind: HelmRepository
     name: kubernetes-switchcloud
     namespace: cozy-public
-  reconcileStrategy: Revision
+  interval: 5m
