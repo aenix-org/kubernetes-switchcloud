@@ -13,21 +13,16 @@ spec:
   - ports:
     - port: 50001
       protocol: TCP
-    {{- if .Values.networkPolicy.allowCIDRs }}
     from:
+    {{- if .Values.networkPolicy.allowCIDRs }}
     {{- range .Values.networkPolicy.allowCIDRs }}
     - ipBlock:
         cidr: {{ . }}
     {{- end }}
-    # also allow from talos-trustd-router pod (in-cluster)
-    - podSelector:
-        matchLabels:
-          app: talos-trustd-router
-    {{- else }}
-    # No allowCIDRs configured — allow only from talos-trustd-router.
-    from:
-    - podSelector:
-        matchLabels:
-          app: talos-trustd-router
     {{- end }}
+    # allow from talos-trustd-router pod in any namespace
+    - podSelector:
+        matchLabels:
+          app: talos-trustd-router
+      namespaceSelector: {}
 {{- end }}
