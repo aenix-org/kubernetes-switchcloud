@@ -251,6 +251,5 @@ charts/
   provider-id-setter/             DaemonSet — sets spec.providerID from OpenStack IMDS
 packages/core/platform/           Platform Helm chart (installed by init.yaml)
 packages/apps/example-values.yaml Example cluster values
-fip-reconciler/                   FIP reconciler source (workaround for CAPO shared-router)
 init.yaml                         Bootstrap — apply once to register the package
 ```
