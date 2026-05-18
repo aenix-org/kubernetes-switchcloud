@@ -20,6 +20,7 @@ import (
 func main() {
 	addr := flag.String("addr", ":50001", "gRPC listen address")
 	bundleDir := flag.String("talos-bundle", "/secrets/bundle", "path to directory containing Talos secrets bundle file")
+	clusterHostname := flag.String("cluster-hostname", "", "cluster API hostname included in TLS SAN (e.g. mycluster.example.org)")
 	flag.Parse()
 
 	log := slog.New(slog.NewJSONHandler(os.Stdout, nil))
@@ -30,7 +31,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	tlsCert, _, err := loader.TLSCredentials()
+	tlsCert, _, err := loader.TLSCredentials(*clusterHostname)
 	if err != nil {
 		log.Error("failed to build TLS credentials", "err", err)
 		os.Exit(1)

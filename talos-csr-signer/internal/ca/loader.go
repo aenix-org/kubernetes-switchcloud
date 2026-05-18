@@ -138,7 +138,8 @@ func (l *Loader) CACertPEM() []byte {
 // TLSCredentials generates an ephemeral server TLS certificate signed by the Talos CA.
 // Workers verify this cert against their known Talos CA — this proves we are the
 // legitimate trustd for this cluster.
-func (l *Loader) TLSCredentials() (tls.Certificate, *x509.CertPool, error) {
+// clusterHostname is added to the DNS SAN so Talos workers can verify the hostname.
+func (l *Loader) TLSCredentials(clusterHostname string) (tls.Certificate, *x509.CertPool, error) {
 	_, priv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		return tls.Certificate{}, nil, fmt.Errorf("generate server key: %w", err)
@@ -149,9 +150,15 @@ func (l *Loader) TLSCredentials() (tls.Certificate, *x509.CertPool, error) {
 		return tls.Certificate{}, nil, fmt.Errorf("generate serial: %w", err)
 	}
 
+	dnsNames := []string{}
+	if clusterHostname != "" {
+		dnsNames = append(dnsNames, clusterHostname)
+	}
+
 	tmpl := &x509.Certificate{
 		SerialNumber: serial,
 		Subject:      pkix.Name{Organization: []string{"talos"}},
+		DNSNames:     dnsNames,
 		NotBefore:    time.Now().Add(-time.Minute),
 		NotAfter:     time.Now().Add(8760 * time.Hour),
 		KeyUsage:     x509.KeyUsageDigitalSignature,

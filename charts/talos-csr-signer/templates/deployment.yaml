@@ -28,6 +28,9 @@ spec:
         args:
         - --addr=:50001
         - --talos-bundle=/secrets
+        {{- if .Values.clusterHostname }}
+        - --cluster-hostname={{ .Values.clusterHostname }}
+        {{- end }}
         securityContext:
           allowPrivilegeEscalation: false
           readOnlyRootFilesystem: true
