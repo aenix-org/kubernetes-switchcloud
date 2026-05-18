@@ -10,9 +10,14 @@ import (
 	"os/signal"
 	"syscall"
 
+	"fmt"
+
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/tools/clientcmd"
 
+	"github.com/aenix-org/kubernetes-switchcloud/talos-csr-signer/internal/bootstrap"
 	"github.com/aenix-org/kubernetes-switchcloud/talos-csr-signer/internal/ca"
 	"github.com/aenix-org/kubernetes-switchcloud/talos-csr-signer/internal/server"
 )
@@ -21,9 +26,17 @@ func main() {
 	addr := flag.String("addr", ":50001", "gRPC listen address")
 	bundleDir := flag.String("talos-bundle", "/secrets/bundle", "path to directory containing Talos secrets bundle file")
 	clusterHostname := flag.String("cluster-hostname", "", "cluster API hostname included in TLS SAN (e.g. mycluster.example.org)")
+	workloadKubeconfig := flag.String("workload-kubeconfig", "", "path to workload cluster kubeconfig for bootstrap token management (optional)")
 	flag.Parse()
 
 	log := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+
+	if *workloadKubeconfig != "" {
+		if err := ensureBootstrapToken(context.Background(), *bundleDir, *workloadKubeconfig, log); err != nil {
+			log.Error("failed to ensure bootstrap token", "err", err)
+			os.Exit(1)
+		}
+	}
 
 	loader, err := ca.NewLoader(*bundleDir)
 	if err != nil {
@@ -71,4 +84,23 @@ func main() {
 	<-ctx.Done()
 	log.Info("shutting down")
 	grpcServer.GracefulStop()
+}
+
+func ensureBootstrapToken(ctx context.Context, bundleDir, kubeconfigPath string, log *slog.Logger) error {
+	token, err := bootstrap.TokenFromBundle(bundleDir)
+	if err != nil {
+		return err
+	}
+
+	cfg, err := clientcmd.BuildConfigFromFlags("", kubeconfigPath)
+	if err != nil {
+		return fmt.Errorf("build kubeconfig: %w", err)
+	}
+
+	cs, err := kubernetes.NewForConfig(cfg)
+	if err != nil {
+		return fmt.Errorf("create k8s client: %w", err)
+	}
+
+	return bootstrap.EnsureToken(ctx, cs, token, log)
 }

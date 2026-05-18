@@ -1,9 +1,11 @@
 package ca_test
 
 import (
+	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/base64"
 	"encoding/pem"
 	"math/big"
 	"net"
@@ -11,8 +13,6 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
-
-	"crypto/ed25519"
 
 	"github.com/aenix-org/kubernetes-switchcloud/talos-csr-signer/internal/ca"
 )
@@ -54,38 +54,16 @@ func makeTestBundle(t *testing.T) (dir string, caKey ed25519.PrivateKey, caCert 
 	}
 	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER})
 
-	bundleYAML := "certs:\n  os:\n    crt: |\n"
-	for _, line := range splitLines(string(certPEM)) {
-		bundleYAML += "      " + line + "\n"
-	}
-	bundleYAML += "    key: |\n"
-	for _, line := range splitLines(string(keyPEM)) {
-		bundleYAML += "      " + line + "\n"
-	}
+	// loader.go expects base64-encoded PEM (matching the CABPT secrets bundle format).
+	bundleYAML := "certs:\n  os:\n    crt: " + base64.StdEncoding.EncodeToString(certPEM) + "\n" +
+		"    key: " + base64.StdEncoding.EncodeToString(keyPEM) + "\n"
 
 	dir = t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "bundle"), []byte(bundleYAML), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "bundle"), []byte(bundleYAML), 0o600); err != nil {
 		t.Fatalf("write bundle: %v", err)
 	}
 
 	return dir, priv, caCert
-}
-
-func splitLines(s string) []string {
-	var lines []string
-	cur := ""
-	for _, c := range s {
-		if c == '\n' {
-			lines = append(lines, cur)
-			cur = ""
-		} else {
-			cur += string(c)
-		}
-	}
-	if cur != "" {
-		lines = append(lines, cur)
-	}
-	return lines
 }
 
 func TestLoader_LoadsCA(t *testing.T) {
@@ -109,7 +87,7 @@ func TestLoader_TLSCredentials(t *testing.T) {
 		t.Fatalf("NewLoader: %v", err)
 	}
 
-	tlsCert, pool, err := loader.TLSCredentials()
+	tlsCert, pool, err := loader.TLSCredentials("")
 	if err != nil {
 		t.Fatalf("TLSCredentials: %v", err)
 	}
