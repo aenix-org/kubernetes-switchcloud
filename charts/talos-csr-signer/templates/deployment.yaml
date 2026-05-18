@@ -1,0 +1,54 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-csr-signer
+  labels:
+    app: {{ .Release.Name }}-csr-signer
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: {{ .Release.Name }}-csr-signer
+  template:
+    metadata:
+      labels:
+        app: {{ .Release.Name }}-csr-signer
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+      - name: csr-signer
+        image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        args:
+        - --addr=:50001
+        - --talos-bundle=/secrets
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop: [ALL]
+        ports:
+        - name: trustd
+          containerPort: 50001
+          protocol: TCP
+        volumeMounts:
+        - name: talos-bundle
+          mountPath: /secrets
+          readOnly: true
+        resources:
+          {{- toYaml .Values.resources | nindent 10 }}
+        readinessProbe:
+          tcpSocket:
+            port: 50001
+          initialDelaySeconds: 3
+          periodSeconds: 10
+      volumes:
+      - name: talos-bundle
+        secret:
+          secretName: {{ required "talosBundleSecret is required" .Values.talosBundleSecret }}

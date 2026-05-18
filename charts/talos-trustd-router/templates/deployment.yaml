@@ -1,0 +1,45 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: talos-trustd-router
+  labels:
+    app: talos-trustd-router
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: talos-trustd-router
+  template:
+    metadata:
+      labels:
+        app: talos-trustd-router
+    spec:
+      serviceAccountName: talos-trustd-router
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+      - name: router
+        image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        args:
+        - --addr=:50001
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop: [ALL]
+        ports:
+        - name: trustd
+          containerPort: 50001
+          protocol: TCP
+        resources:
+          {{- toYaml .Values.resources | nindent 10 }}
+        readinessProbe:
+          tcpSocket:
+            port: 50001
+          initialDelaySeconds: 3
+          periodSeconds: 10
