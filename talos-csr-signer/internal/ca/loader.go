@@ -10,6 +10,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/base64"
 	"encoding/pem"
 	"fmt"
 	"math/big"
@@ -54,7 +55,13 @@ func NewLoader(bundleDir string) (*Loader, error) {
 		return nil, fmt.Errorf("bundle missing certs.os.crt or certs.os.key")
 	}
 
-	caPEM := []byte(b.Certs.OS.Crt)
+	// Bundle values are base64-encoded PEM — decode before parsing.
+	caPEMRaw, err := base64.StdEncoding.DecodeString(b.Certs.OS.Crt)
+	if err != nil {
+		return nil, fmt.Errorf("base64-decode CA cert: %w", err)
+	}
+	caPEM := caPEMRaw
+
 	block, _ := pem.Decode(caPEM)
 	if block == nil {
 		return nil, fmt.Errorf("failed to decode CA PEM")
@@ -65,7 +72,12 @@ func NewLoader(bundleDir string) (*Loader, error) {
 		return nil, fmt.Errorf("parse CA cert: %w", err)
 	}
 
-	keyBlock, _ := pem.Decode([]byte(b.Certs.OS.Key))
+	caKeyRaw, err := base64.StdEncoding.DecodeString(b.Certs.OS.Key)
+	if err != nil {
+		return nil, fmt.Errorf("base64-decode CA key: %w", err)
+	}
+
+	keyBlock, _ := pem.Decode(caKeyRaw)
 	if keyBlock == nil {
 		return nil, fmt.Errorf("failed to decode CA key PEM")
 	}
