@@ -1,5 +1,5 @@
 image:
-  repository: 999669/talos-csr-signer
+  repository: ghcr.io/aenix-org/talos-csr-signer
   tag: ""  # defaults to .Chart.AppVersion
   pullPolicy: IfNotPresent
 

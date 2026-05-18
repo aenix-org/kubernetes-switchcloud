@@ -103,7 +103,7 @@ addons:
   providerIdSetter:
     enabled: false
     ## @param addons.providerIdSetter.chartURL OCI URL of the provider-id-setter Helm chart
-    chartURL: oci://registry-1.docker.io/999669/provider-id-setter
+    chartURL: oci://ghcr.io/aenix-org/provider-id-setter
     ## @param addons.providerIdSetter.chartVersion Chart version tag to pull
     chartVersion: "0.1.1"
     valuesOverride: {}
@@ -140,7 +140,7 @@ addons:
 ## and calls Neutron directly to associate the FIP with the VM's internal port.
 fipReconciler:
   ## @param fipReconciler.image Container image for the FIP reconciler
-  image: "docker.io/999669/fip-reconciler:latest"
+  image: "ghcr.io/aenix-org/fip-reconciler:latest"
   ## @param fipReconciler.interval Polling interval for checking FloatingIPError
   interval: "30s"
 
