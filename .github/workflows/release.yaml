@@ -33,9 +33,9 @@ jobs:
           SHA="${GITHUB_SHA::8}"
           if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
             VERSION="${GITHUB_REF#refs/tags/v}"
-            echo "tags=ghcr.io/aenix-org/provider-id-setter:${VERSION},ghcr.io/aenix-org/provider-id-setter:latest" >> "$GITHUB_OUTPUT"
+            echo "tags=ghcr.io/aenix-org/provider-id-setter:${VERSION}" >> "$GITHUB_OUTPUT"
           else
-            echo "tags=ghcr.io/aenix-org/provider-id-setter:${SHA},ghcr.io/aenix-org/provider-id-setter:latest" >> "$GITHUB_OUTPUT"
+            echo "tags=ghcr.io/aenix-org/provider-id-setter:${SHA}" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Build and push
@@ -74,9 +74,9 @@ jobs:
           SHA="${GITHUB_SHA::8}"
           if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
             VERSION="${GITHUB_REF#refs/tags/v}"
-            echo "tags=ghcr.io/aenix-org/talos-csr-signer:${VERSION},ghcr.io/aenix-org/talos-csr-signer:latest" >> "$GITHUB_OUTPUT"
+            echo "tags=ghcr.io/aenix-org/talos-csr-signer:${VERSION}" >> "$GITHUB_OUTPUT"
           else
-            echo "tags=ghcr.io/aenix-org/talos-csr-signer:${SHA},ghcr.io/aenix-org/talos-csr-signer:latest" >> "$GITHUB_OUTPUT"
+            echo "tags=ghcr.io/aenix-org/talos-csr-signer:${SHA}" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Build and push
@@ -115,9 +115,9 @@ jobs:
           SHA="${GITHUB_SHA::8}"
           if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
             VERSION="${GITHUB_REF#refs/tags/v}"
-            echo "tags=ghcr.io/aenix-org/talos-trustd-router:${VERSION},ghcr.io/aenix-org/talos-trustd-router:latest" >> "$GITHUB_OUTPUT"
+            echo "tags=ghcr.io/aenix-org/talos-trustd-router:${VERSION}" >> "$GITHUB_OUTPUT"
           else
-            echo "tags=ghcr.io/aenix-org/talos-trustd-router:${SHA},ghcr.io/aenix-org/talos-trustd-router:latest" >> "$GITHUB_OUTPUT"
+            echo "tags=ghcr.io/aenix-org/talos-trustd-router:${SHA}" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Build and push

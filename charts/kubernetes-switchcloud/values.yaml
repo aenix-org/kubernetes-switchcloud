@@ -105,7 +105,7 @@ addons:
     ## @param addons.providerIdSetter.chartURL OCI URL of the provider-id-setter Helm chart
     chartURL: oci://ghcr.io/aenix-org/provider-id-setter
     ## @param addons.providerIdSetter.chartVersion Chart version tag to pull
-    chartVersion: "0.1.1"
+    chartVersion: "0.1.2"
     valuesOverride: {}
   clusterAutoscaler:
     enabled: false
@@ -127,7 +127,7 @@ addons:
     ## @param addons.trustd.chartURL OCI URL of the talos-csr-signer Helm chart
     chartURL: oci://ghcr.io/aenix-org/talos-csr-signer
     ## @param addons.trustd.chartVersion Chart version tag to pull
-    chartVersion: "0.1.0"
+    chartVersion: "0.1.4"
     ## @param addons.trustd.networkPolicy.allowCIDRs Source CIDRs allowed to reach the signer (VM networks)
     networkPolicy:
       allowCIDRs: []
