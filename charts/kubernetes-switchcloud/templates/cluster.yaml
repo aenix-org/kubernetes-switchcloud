@@ -266,15 +266,6 @@ spec:
           path: /cluster/ca/crt
           value: {{ index $kamajiCA.data "tls.crt" }}
         {{- end }}
-        {{- $talosBundleSecret := lookup "v1" "Secret" $.Release.Namespace (printf "%s-talos" $.Release.Name) }}
-        {{- if and $talosBundleSecret $talosBundleSecret.data (index $talosBundleSecret.data "bundle") }}
-        {{- $bundle := index $talosBundleSecret.data "bundle" | b64dec | fromYaml }}
-        {{- if and $bundle $bundle.certs $bundle.certs.os $bundle.certs.os.key }}
-        - op: replace
-          path: /machine/ca/key
-          value: {{ $bundle.certs.os.key }}
-        {{- end }}
-        {{- end }}
 ---
 apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
 kind: OpenStackMachineTemplate
