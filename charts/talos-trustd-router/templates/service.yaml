@@ -10,7 +10,3 @@ spec:
     port: 50001
     targetPort: trustd
     protocol: TCP
-  {{- if .Values.externalIPs }}
-  externalIPs:
-    {{- toYaml .Values.externalIPs | nindent 4 }}
-  {{- end }}

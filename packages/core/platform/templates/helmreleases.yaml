@@ -2,6 +2,26 @@
 apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
 metadata:
+  name: talos-trustd-router
+  namespace: cozy-system
+spec:
+  interval: 5m
+  releaseName: talos-trustd-router
+  targetNamespace: cozy-system
+  chartRef:
+    kind: HelmChart
+    name: kubernetes-switchcloud-talos-trustd-router
+    namespace: cozy-public
+  install:
+    remediation:
+      retries: -1
+  upgrade:
+    remediation:
+      retries: -1
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
   name: capi-bootstrap-talos
   namespace: cozy-cluster-api
 spec:

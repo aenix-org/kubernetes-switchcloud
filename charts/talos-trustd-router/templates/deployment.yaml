@@ -28,6 +28,13 @@ spec:
         imagePullPolicy: {{ .Values.image.pullPolicy }}
         args:
         - --addr=:50001
+        - --sync-namespace=$(POD_NAMESPACE)
+        - --sync-service=talos-trustd-router
+        env:
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
         securityContext:
           allowPrivilegeEscalation: false
           readOnlyRootFilesystem: true

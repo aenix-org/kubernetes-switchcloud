@@ -3,13 +3,6 @@ image:
   tag: ""  # defaults to .Chart.AppVersion
   pullPolicy: IfNotPresent
 
-# externalIPs are the IPs on which port 50001 is exposed.
-# Must match the externalIPs of the management cluster ingress.
-externalIPs: []
-# - 10.3.0.225
-# - 10.3.0.71
-# - 10.3.0.83
-
 resources:
   requests:
     cpu: 10m

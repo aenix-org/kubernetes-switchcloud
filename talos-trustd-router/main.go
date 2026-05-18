@@ -19,6 +19,8 @@ import (
 func main() {
 	addr := flag.String("addr", ":50001", "TCP listen address")
 	kubeconfig := flag.String("kubeconfig", "", "path to kubeconfig (empty = in-cluster)")
+	syncNamespace := flag.String("sync-namespace", "", "namespace of the Service to sync externalIPs (empty = disabled)")
+	syncService := flag.String("sync-service", "talos-trustd-router", "name of the Service to sync externalIPs")
 	flag.Parse()
 
 	log := slog.New(slog.NewJSONHandler(os.Stdout, nil))
@@ -42,6 +44,14 @@ func main() {
 	if err != nil {
 		log.Error("create router", "err", err)
 		os.Exit(1)
+	}
+
+	if *syncNamespace != "" {
+		go func() {
+			if err := sniproxy.RunIPSyncer(ctx, client, *syncNamespace, *syncService, log); err != nil {
+				log.Error("ip syncer error", "err", err)
+			}
+		}()
 	}
 
 	lis, err := net.Listen("tcp", *addr)
