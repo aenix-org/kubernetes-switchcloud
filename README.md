@@ -8,9 +8,9 @@ Cozystack package for managed Kubernetes clusters on [Switch Cloud](https://clou
 ```mermaid
 graph TD
     subgraph install["1 · Package installation (init.yaml)"]
-        GR["GitRepository\ncozy-public/kubernetes-switchcloud"]
+        OCI["OCIRepository\nghcr.io/aenix-org/kubernetes-switchcloud-platform"]
         PC["HelmRelease\ncozy-system/kubernetes-switchcloud\n(platform chart)"]
-        GR --> PC
+        OCI --> PC
         PC --> CABPT["HelmRelease\ncapi-bootstrap-talos\ncozy-cluster-api"]
         PC --> CAPO["HelmRelease\ncapi-infraprovider-openstack\ncozy-cluster-api"]
         PC --> TRUSTD["HelmRelease\ntalos-trustd-router\ncozy-talos-trustd-router"]
@@ -70,10 +70,10 @@ objects. The Kamaji API endpoint becomes
 
 ## Installation
 
-Apply `init.yaml` once on the management cluster. This registers a `GitRepository` pointing to
-this repo and a `HelmRelease` that installs the platform chart, which in turn deploys the CAPI
-providers for Talos bootstrapping and OpenStack infrastructure, the `talos-trustd-router` SNI
-proxy (required for Talos worker certificate signing), and the `ApplicationDefinition` that
+Apply `init.yaml` once on the management cluster. This creates an `OCIRepository` pointing to
+the platform chart on GHCR and a `HelmRelease` that installs it. The platform chart deploys the
+CAPI providers for Talos bootstrapping and OpenStack infrastructure, the `talos-trustd-router`
+SNI proxy (required for Talos worker certificate signing), and the `ApplicationDefinition` that
 makes `KubernetesSwitchcloud` available as a resource type in the Cozystack API and dashboard.
 
 ```bash
