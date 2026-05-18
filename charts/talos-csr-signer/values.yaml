@@ -12,6 +12,12 @@ clusterHostname: ""
 # Must be in the same namespace. Key inside the Secret must be "bundle".
 talosBundleSecret: ""
 
+# workloadKubeconfigSecret is the name of the Secret containing the workload cluster
+# kubeconfig (CAPI cluster.x-k8s.io/secret type, key "value"). When set, talos-csr-signer
+# creates the bootstrap-token-* Secret in kube-system of the workload cluster on startup,
+# enabling Talos workers to authenticate against a Kamaji-hosted control plane.
+workloadKubeconfigSecret: ""
+
 # networkPolicy controls ingress restrictions on port 50001.
 networkPolicy:
   enabled: true

@@ -31,6 +31,9 @@ spec:
         {{- if .Values.clusterHostname }}
         - --cluster-hostname={{ .Values.clusterHostname }}
         {{- end }}
+        {{- if .Values.workloadKubeconfigSecret }}
+        - --workload-kubeconfig=/workload-kubeconfig/value
+        {{- end }}
         securityContext:
           allowPrivilegeEscalation: false
           readOnlyRootFilesystem: true
@@ -44,6 +47,11 @@ spec:
         - name: talos-bundle
           mountPath: /secrets
           readOnly: true
+        {{- if .Values.workloadKubeconfigSecret }}
+        - name: workload-kubeconfig
+          mountPath: /workload-kubeconfig
+          readOnly: true
+        {{- end }}
         resources:
           {{- toYaml .Values.resources | nindent 10 }}
         readinessProbe:
@@ -55,3 +63,11 @@ spec:
       - name: talos-bundle
         secret:
           secretName: {{ required "talosBundleSecret is required" .Values.talosBundleSecret }}
+      {{- if .Values.workloadKubeconfigSecret }}
+      - name: workload-kubeconfig
+        secret:
+          secretName: {{ .Values.workloadKubeconfigSecret }}
+          items:
+          - key: value
+            path: value
+      {{- end }}

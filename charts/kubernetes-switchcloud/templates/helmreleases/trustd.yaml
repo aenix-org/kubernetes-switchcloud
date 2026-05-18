@@ -41,6 +41,7 @@ spec:
   values:
     clusterHostname: {{ $clusterHostname }}
     talosBundleSecret: {{ .Release.Name }}-talos
+    workloadKubeconfigSecret: {{ .Release.Name }}-kubeconfig
     {{- with .Values.addons.trustd.networkPolicy.allowCIDRs }}
     networkPolicy:
       enabled: true
