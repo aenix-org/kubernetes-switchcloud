@@ -1,5 +1,5 @@
 image:
-  repository: ghcr.io/aenix-org/talos-trustd-router
+  repository: 999669/talos-trustd-router
   tag: ""  # defaults to .Chart.AppVersion
   pullPolicy: IfNotPresent
 

@@ -1,6 +1,6 @@
 module github.com/aenix-org/kubernetes-switchcloud/talos-trustd-router
 
-go 1.25.5
+go 1.24
 
 require (
 	k8s.io/api v0.31.9
