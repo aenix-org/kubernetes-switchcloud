@@ -132,18 +132,6 @@ addons:
     networkPolicy:
       allowCIDRs: []
 
-## @section FIP Reconciler
-## Works around CAPO v0.12.x limitation on shared-router OpenStack topologies
-## (Switch Cloud): CAPO cannot associate a pre-allocated FIP because it searches
-## for the VM port on the public network, but the VM port lives on the internal
-## network.  The reconciler watches OpenStackServer objects with FloatingIPError
-## and calls Neutron directly to associate the FIP with the VM's internal port.
-fipReconciler:
-  ## @param fipReconciler.image Container image for the FIP reconciler
-  image: "ghcr.io/aenix-org/fip-reconciler:latest"
-  ## @param fipReconciler.interval Polling interval for checking FloatingIPError
-  interval: "30s"
-
 ## @section Internal (injected by cozystack-api)
 _namespace:
   etcd: ""

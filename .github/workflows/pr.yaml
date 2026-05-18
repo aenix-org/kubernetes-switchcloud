@@ -9,25 +9,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  build-image:
-    name: Build fip-reconciler image
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Build (no push)
-        uses: docker/build-push-action@v6
-        with:
-          context: fip-reconciler
-          file: fip-reconciler/Containerfile
-          platforms: linux/amd64
-          push: false
-
   lint-chart:
-    name: Lint Helm chart
+    name: Lint Helm charts
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -45,25 +28,25 @@ jobs:
             --set 'openstack.regionName=zhw' \
             --set 'openstack.applicationCredentialID=test' \
             --set 'openstack.applicationCredentialSecret=test' \
-            --set 'openstack.network.id=80dcf0aa-0000' \
-            --set 'openstack.floatingIPNetwork=public'
+            --set 'openstack.network.id=80dcf0aa-0000'
 
+      - name: Lint provider-id-setter
+        run: helm lint charts/provider-id-setter/
 
-  build-go:
-    name: Go build & vet
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
+      - name: Lint talos-trustd-router
+        run: helm lint charts/talos-trustd-router/
 
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: fip-reconciler/go.mod
-          cache-dependency-path: fip-reconciler/go.sum
+      - name: Lint talos-csr-signer
+        run: |
+          helm lint charts/talos-csr-signer/ \
+            --set 'clusterHostname=test.example.com' \
+            --set 'talosBundleSecret=test-bundle'
 
-      - name: Build
-        working-directory: fip-reconciler
-        run: go build ./...
+      - name: Lint capi-bootstrap-talos
+        run: helm lint charts/capi-bootstrap-talos/
 
-      - name: Vet
-        working-directory: fip-reconciler
-        run: go vet ./...
+      - name: Lint capi-infraprovider-openstack
+        run: helm lint charts/capi-infraprovider-openstack/
+
+      - name: Lint platform chart
+        run: helm lint packages/core/platform/
