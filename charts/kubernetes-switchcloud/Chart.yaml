@@ -2,7 +2,7 @@ apiVersion: v2
 name: kubernetes-switchcloud
 description: Managed Kubernetes service on Switch Cloud (OpenStack + Talos)
 type: application
-version: 0.3.1
+version: 0.3.2
 appVersion: "1.32.6"
 keywords:
   - kubernetes
