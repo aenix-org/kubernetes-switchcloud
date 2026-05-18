@@ -40,3 +40,17 @@ spec:
     name: kubernetes-switchcloud
     namespace: cozy-public
   reconcileStrategy: Revision
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmChart
+metadata:
+  name: kubernetes-switchcloud-talos-trustd-router
+  namespace: cozy-public
+spec:
+  interval: 5m
+  chart: ./charts/talos-trustd-router
+  sourceRef:
+    kind: GitRepository
+    name: kubernetes-switchcloud
+    namespace: cozy-public
+  reconcileStrategy: Revision

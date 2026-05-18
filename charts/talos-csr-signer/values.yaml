@@ -1,0 +1,28 @@
+image:
+  repository: 999669/talos-csr-signer
+  tag: ""  # defaults to .Chart.AppVersion
+  pullPolicy: IfNotPresent
+
+# clusterHostname is the FQDN of the cluster's API endpoint.
+# The trustd-router uses this to match incoming SNI to this signer.
+# Example: kubernetes-switchcloud-sc-test.dev3.infra.aenix.org
+clusterHostname: ""
+
+# talosBundleSecret is the name of the Secret containing the Talos secrets bundle.
+# Must be in the same namespace. Key inside the Secret must be "bundle".
+talosBundleSecret: ""
+
+# networkPolicy controls ingress restrictions on port 50001.
+networkPolicy:
+  enabled: true
+  # allowCIDRs restricts which source CIDRs may reach the signer.
+  # Set to Switch Cloud VM network ranges.
+  allowCIDRs: []
+  # - 10.0.0.0/8
+
+resources:
+  requests:
+    cpu: 10m
+    memory: 32Mi
+  limits:
+    memory: 64Mi

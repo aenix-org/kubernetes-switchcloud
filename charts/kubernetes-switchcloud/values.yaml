@@ -121,6 +121,16 @@ addons:
   openstackCCM:
     enabled: false
     valuesOverride: {}
+  ## @param addons.trustd.enabled Deploy talos-csr-signer so Talos workers can obtain their API server certificate
+  trustd:
+    enabled: false
+    ## @param addons.trustd.chartURL OCI URL of the talos-csr-signer Helm chart
+    chartURL: oci://ghcr.io/aenix-org/talos-csr-signer
+    ## @param addons.trustd.chartVersion Chart version tag to pull
+    chartVersion: "0.1.0"
+    ## @param addons.trustd.networkPolicy.allowCIDRs Source CIDRs allowed to reach the signer (VM networks)
+    networkPolicy:
+      allowCIDRs: []
 
 ## @section FIP Reconciler
 ## Works around CAPO v0.12.x limitation on shared-router OpenStack topologies

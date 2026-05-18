@@ -1,0 +1,28 @@
+{{- if .Values.networkPolicy.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Release.Name }}-csr-signer
+spec:
+  podSelector:
+    matchLabels:
+      app: {{ .Release.Name }}-csr-signer
+  policyTypes:
+  - Ingress
+  ingress:
+  - ports:
+    - port: 50001
+      protocol: TCP
+    from:
+    {{- if .Values.networkPolicy.allowCIDRs }}
+    {{- range .Values.networkPolicy.allowCIDRs }}
+    - ipBlock:
+        cidr: {{ . }}
+    {{- end }}
+    {{- end }}
+    # allow from talos-trustd-router pod in any namespace
+    - podSelector:
+        matchLabels:
+          app: talos-trustd-router
+      namespaceSelector: {}
+{{- end }}

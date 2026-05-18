@@ -1,52 +1,51 @@
-{{- if and .Values.addons.providerIdSetter.enabled .Values._namespace.etcd }}
+{{- if and .Values.addons.trustd.enabled .Values._namespace.etcd }}
 {{- $host := .Values._namespace.host }}
-{{- $apiServer := printf "https://%s:443" (.Values.host | default (printf "%s.%s" .Release.Name $host)) }}
+{{- $clusterHostname := .Values.host | default (printf "%s.%s" .Release.Name $host) }}
 ---
 apiVersion: source.toolkit.fluxcd.io/v1beta2
 kind: OCIRepository
 metadata:
-  name: {{ .Release.Name }}-provider-id-setter
+  name: {{ .Release.Name }}-trustd
   namespace: {{ .Release.Namespace }}
   labels:
     cozystack.io/target-cluster-name: {{ .Release.Name }}
 spec:
   interval: 5m
-  url: {{ .Values.addons.providerIdSetter.chartURL }}
+  url: {{ .Values.addons.trustd.chartURL }}
   ref:
-    tag: {{ .Values.addons.providerIdSetter.chartVersion }}
+    tag: {{ .Values.addons.trustd.chartVersion }}
 ---
 apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
 metadata:
-  name: {{ .Release.Name }}-provider-id-setter
+  name: {{ .Release.Name }}-trustd
   labels:
     cozystack.io/target-cluster-name: {{ .Release.Name }}
     sharding.fluxcd.io/key: tenants
 spec:
-  releaseName: provider-id-setter
+  releaseName: talos-csr-signer
   chartRef:
     kind: OCIRepository
-    name: {{ .Release.Name }}-provider-id-setter
+    name: {{ .Release.Name }}-trustd
     namespace: {{ .Release.Namespace }}
-  kubeConfig:
-    secretRef:
-      name: {{ .Release.Name }}-admin-kubeconfig
-      key: super-admin.svc
-  targetNamespace: kube-system
-  storageNamespace: kube-system
+  targetNamespace: {{ .Release.Namespace }}
+  storageNamespace: {{ .Release.Namespace }}
   interval: 5m
   timeout: 5m
   install:
-    createNamespace: false
     remediation:
       retries: -1
   upgrade:
     remediation:
       retries: -1
   values:
-    apiServerOverride: {{ $apiServer }}
-    {{- with .Values.addons.providerIdSetter.valuesOverride }}
-    {{- toYaml . | nindent 4 }}
+    clusterHostname: {{ $clusterHostname }}
+    talosBundleSecret: {{ .Release.Name }}-talos
+    {{- with .Values.addons.trustd.networkPolicy.allowCIDRs }}
+    networkPolicy:
+      enabled: true
+      allowCIDRs:
+        {{- toYaml . | nindent 8 }}
     {{- end }}
   {{- if lookup "helm.toolkit.fluxcd.io/v2" "HelmRelease" .Release.Namespace .Release.Name }}
   dependsOn:
