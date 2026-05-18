@@ -1,4 +1,46 @@
 {{/*
+TalosConfigTemplate spec fragment used for hash-based immutability.
+Must be defined at file scope (not inside range).
+Context must include: systemReservedMemory, kubeReservedMemory, systemReservedCpu,
+kubeReservedCpu, evictionHardMemory, evictionSoftMemory (plus the standard $ root).
+*/}}
+{{- define "talosconfigtemplate" -}}
+generateType: worker
+talosVersion: {{ $.Values.talosVersion }}
+configPatches:
+  - op: add
+    path: /machine/kubelet/extraArgs
+    value:
+      system-reserved: "memory={{ .systemReservedMemory }},cpu={{ .systemReservedCpu }}"
+      kube-reserved: "memory={{ .kubeReservedMemory }},cpu={{ .kubeReservedCpu }}"
+      eviction-hard: "memory.available<{{ .evictionHardMemory }},nodefs.available<10%"
+      eviction-soft: "memory.available<{{ .evictionSoftMemory }},nodefs.available<15%"
+      eviction-soft-grace-period: "memory.available=1m30s,nodefs.available=1m30s"
+      enforce-node-allocatable: "pods"
+      {{- if ($.Values.addons.openstackCCM | default dict).enabled }}
+      cloud-provider: "external"
+      {{- end }}
+  - op: replace
+    path: /machine/features/kubePrism/enabled
+    value: false
+  - op: replace
+    path: /machine/features/hostDNS/forwardKubeDNSToHost
+    value: false
+  - op: add
+    path: /machine/kernel
+    value:
+      modules:
+        - name: spl
+        - name: zfs
+  {{- $kamajiCA := lookup "v1" "Secret" $.Release.Namespace (printf "%s-ca" $.Release.Name) }}
+  {{- if and $kamajiCA $kamajiCA.data (index $kamajiCA.data "tls.crt") }}
+  - op: replace
+    path: /cluster/ca/crt
+    value: {{ index $kamajiCA.data "tls.crt" }}
+  {{- end }}
+{{- end }}
+
+{{/*
 OpenStackMachineTemplate spec fragment used for hash-based immutability.
 Must be defined at file scope (not inside range).
 */}}
@@ -36,10 +78,11 @@ securityGroups:
 {{- $credSecret := include "kubernetes-switchcloud.credentialsSecretName" . }}
 
 {{/*
-Collect names of all OpenStackMachineTemplates rendered this pass for the
-immutable-template preservation logic at the end of this file.
+Collect names of all immutable templates rendered this pass for the
+preservation logic at the end of this file.
 */}}
 {{- $openstackMachineTemplateNames := list }}
+{{- $talosConfigTemplateNames := list }}
 
 {{- if not $etcd }}
 ---
@@ -220,6 +263,16 @@ Compute kubelet reservations:
 {{- $context := deepCopy $ }}
 {{- $_ := set $context "group" $group }}
 {{- $_ := set $context "groupName" $groupName }}
+{{- $_ := set $context "systemReservedMemory" $systemReservedMemory }}
+{{- $_ := set $context "kubeReservedMemory" $kubeReservedMemory }}
+{{- $_ := set $context "systemReservedCpu" $systemReservedCpu }}
+{{- $_ := set $context "kubeReservedCpu" $kubeReservedCpu }}
+{{- $_ := set $context "evictionHardMemory" $evictionHardMemory }}
+{{- $_ := set $context "evictionSoftMemory" $evictionSoftMemory }}
+{{- $talosConfigFields := include "talosconfigtemplate" $context }}
+{{- $talosConfigHash := $talosConfigFields | sha256sum | trunc 6 }}
+{{- $talosConfigName := printf "%s-%s-%s" $.Release.Name $groupName $talosConfigHash }}
+{{- $talosConfigTemplateNames = append $talosConfigTemplateNames $talosConfigName }}
 {{- $templateFields := include "openstackmachinetemplate" $context }}
 {{- $templateHash := $templateFields | sha256sum | trunc 6 }}
 {{- $templateName := printf "%s-%s-%s" $.Release.Name $groupName $templateHash }}
@@ -228,44 +281,12 @@ Compute kubelet reservations:
 apiVersion: bootstrap.cluster.x-k8s.io/v1alpha3
 kind: TalosConfigTemplate
 metadata:
-  name: {{ $.Release.Name }}-{{ $groupName }}
+  name: {{ $talosConfigName }}
   namespace: {{ $.Release.Namespace }}
 spec:
   template:
     spec:
-      generateType: worker
-      talosVersion: {{ $.Values.talosVersion }}
-      configPatches:
-        - op: add
-          path: /machine/kubelet/extraArgs
-          value:
-            system-reserved: "memory={{ $systemReservedMemory }},cpu={{ $systemReservedCpu }}"
-            kube-reserved: "memory={{ $kubeReservedMemory }},cpu={{ $kubeReservedCpu }}"
-            eviction-hard: "memory.available<{{ $evictionHardMemory }},nodefs.available<10%"
-            eviction-soft: "memory.available<{{ $evictionSoftMemory }},nodefs.available<15%"
-            eviction-soft-grace-period: "memory.available=1m30s,nodefs.available=1m30s"
-            enforce-node-allocatable: "pods"
-            {{- if ($.Values.addons.openstackCCM | default dict).enabled }}
-            cloud-provider: "external"
-            {{- end }}
-        - op: replace
-          path: /machine/features/kubePrism/enabled
-          value: false
-        - op: replace
-          path: /machine/features/hostDNS/forwardKubeDNSToHost
-          value: false
-        - op: add
-          path: /machine/kernel
-          value:
-            modules:
-              - name: spl
-              - name: zfs
-        {{- $kamajiCA := lookup "v1" "Secret" $.Release.Namespace (printf "%s-ca" $.Release.Name) }}
-        {{- if and $kamajiCA $kamajiCA.data (index $kamajiCA.data "tls.crt") }}
-        - op: replace
-          path: /cluster/ca/crt
-          value: {{ index $kamajiCA.data "tls.crt" }}
-        {{- end }}
+      {{- $talosConfigFields | nindent 6 }}
 ---
 apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
 kind: OpenStackMachineTemplate
@@ -332,7 +353,7 @@ spec:
         configRef:
           apiVersion: bootstrap.cluster.x-k8s.io/v1alpha3
           kind: TalosConfigTemplate
-          name: {{ $.Release.Name }}-{{ $groupName }}
+          name: {{ $talosConfigName }}
           namespace: {{ $.Release.Namespace }}
       clusterName: {{ $.Release.Name }}
       infrastructureRef:
@@ -365,8 +386,9 @@ spec:
 {{- end }}
 ---
 {{- /*
-Preserve OpenStackMachineTemplates still referenced by active MachineSets
-(immutable resources — safe to keep, must not be deleted while in use).
+Preserve OpenStackMachineTemplates and TalosConfigTemplates still referenced
+by active MachineSets (immutable resources — safe to keep, must not be
+deleted while in use).
 */}}
 {{- $mss := (lookup "cluster.x-k8s.io/v1beta1" "MachineSet" $.Release.Namespace "").items }}
 {{- $oldTemplates := dict }}
@@ -387,6 +409,28 @@ Preserve OpenStackMachineTemplates still referenced by active MachineSets
 ---
 apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
 kind: OpenStackMachineTemplate
+metadata:
+  name: {{ .metadata.name }}
+  namespace: {{ .metadata.namespace }}
+spec:
+  {{- .spec | toYaml | nindent 2 }}
+{{- end }}
+{{- $oldTalosConfigTemplates := dict }}
+{{- range $tpl := (lookup "bootstrap.cluster.x-k8s.io/v1alpha3" "TalosConfigTemplate" .Release.Namespace "").items }}
+{{- if hasPrefix (printf "%s-" $.Release.Name) $tpl.metadata.name }}
+{{- range $ms := $mss }}
+{{- if and (eq $ms.spec.template.spec.bootstrap.configRef.kind "TalosConfigTemplate") (eq $ms.spec.template.spec.bootstrap.configRef.name $tpl.metadata.name) }}
+{{- if not (has $tpl.metadata.name $talosConfigTemplateNames) }}
+{{- $oldTalosConfigTemplates = merge $oldTalosConfigTemplates (dict $tpl.metadata.name $tpl) }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- range $oldTalosConfigTemplates }}
+---
+apiVersion: bootstrap.cluster.x-k8s.io/v1alpha3
+kind: TalosConfigTemplate
 metadata:
   name: {{ .metadata.name }}
   namespace: {{ .metadata.namespace }}
