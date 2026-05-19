@@ -4,13 +4,13 @@ import (
 	"context"
 	"crypto/tls"
 	"flag"
+	"fmt"
 	"log/slog"
 	"net"
 	"os"
 	"os/signal"
 	"syscall"
-
-	"fmt"
+	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
@@ -30,13 +30,6 @@ func main() {
 	flag.Parse()
 
 	log := slog.New(slog.NewJSONHandler(os.Stdout, nil))
-
-	if *workloadKubeconfig != "" {
-		if err := ensureBootstrapToken(context.Background(), *bundleDir, *workloadKubeconfig, log); err != nil {
-			log.Error("failed to ensure bootstrap token", "err", err)
-			os.Exit(1)
-		}
-	}
 
 	loader, err := ca.NewLoader(*bundleDir)
 	if err != nil {
@@ -75,6 +68,13 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
 
+	if *workloadKubeconfig != "" {
+		if err := ensureBootstrapToken(ctx, *bundleDir, *workloadKubeconfig, log); err != nil {
+			log.Warn("initial bootstrap token setup failed, will retry", "err", err)
+		}
+		go runTokenLoop(ctx, *bundleDir, *workloadKubeconfig, log)
+	}
+
 	go func() {
 		if err := grpcServer.Serve(lis); err != nil {
 			log.Error("grpc serve error", "err", err)
@@ -84,6 +84,24 @@ func main() {
 	<-ctx.Done()
 	log.Info("shutting down")
 	grpcServer.GracefulStop()
+}
+
+// runTokenLoop calls ensureBootstrapToken every minute so that if the workload
+// cluster is recreated (and its bootstrap-token secret is wiped), the token is
+// re-created automatically without restarting this pod.
+func runTokenLoop(ctx context.Context, bundleDir, kubeconfigPath string, log *slog.Logger) {
+	ticker := time.NewTicker(time.Minute)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if err := ensureBootstrapToken(ctx, bundleDir, kubeconfigPath, log); err != nil {
+				log.Warn("failed to ensure bootstrap token", "err", err)
+			}
+		}
+	}
 }
 
 func ensureBootstrapToken(ctx context.Context, bundleDir, kubeconfigPath string, log *slog.Logger) error {
