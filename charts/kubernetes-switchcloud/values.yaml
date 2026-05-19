@@ -103,26 +103,8 @@ addons:
   fluxcd:
     enabled: false
     valuesOverride: {}
+  ## @section providerIdSetter (always enabled — required for CAPI node mapping)
   providerIdSetter:
-    enabled: false
-    ## @param addons.providerIdSetter.chartURL OCI URL of the provider-id-setter Helm chart
-    chartURL: oci://ghcr.io/aenix-org/provider-id-setter
-    ## @param addons.providerIdSetter.chartVersion Chart version tag to pull
-    chartVersion: "0.1.2"
-    valuesOverride: {}
-  clusterAutoscaler:
-    enabled: false
-    ## @param addons.clusterAutoscaler.image cluster-autoscaler image (version must match cluster Kubernetes minor)
-    image: "registry.k8s.io/autoscaling/cluster-autoscaler:v1.32.0"
-    ## @param addons.clusterAutoscaler.scaleDownDelayAfterAdd How long after scale-up before scale-down is evaluated
-    scaleDownDelayAfterAdd: "10m"
-    ## @param addons.clusterAutoscaler.scaleDownUnneededTime How long a node must be unneeded before removal
-    scaleDownUnneededTime: "10m"
-    ## @param addons.clusterAutoscaler.maxNodeProvisionTime Maximum time to wait for a new node to become ready
-    maxNodeProvisionTime: "20m"
-  ## @param addons.openstackCCM.enabled Deploy OpenStack Cloud Controller Manager (enables Octavia LoadBalancer without FIP)
-  openstackCCM:
-    enabled: false
     valuesOverride: {}
   ## @section trustd (always enabled — required for Talos worker bootstrap)
   trustd:

@@ -20,7 +20,7 @@ spec:
   targetNamespace: cozy-cert-manager
   storageNamespace: cozy-cert-manager
   interval: 5m
-  timeout: 10m
+  timeout: 20m
   install:
     createNamespace: true
     remediation:

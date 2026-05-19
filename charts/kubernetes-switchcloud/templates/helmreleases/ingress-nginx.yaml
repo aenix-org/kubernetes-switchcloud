@@ -36,8 +36,4 @@ spec:
   dependsOn:
   - name: {{ .Release.Name }}-cilium
     namespace: {{ .Release.Namespace }}
-  {{- if (.Values.addons.openstackCCM | default dict).enabled }}
-  - name: {{ .Release.Name }}-openstack-ccm
-    namespace: {{ .Release.Namespace }}
-  {{- end }}
 {{- end }}
