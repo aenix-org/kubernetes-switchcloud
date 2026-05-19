@@ -32,7 +32,7 @@ spec:
   uninstall:
     timeout: 2m
   values:
-    {{- mergeOverwrite (dict "metrics-server" (dict "serviceMonitor" (dict "enabled" false))) (.Values.addons.metricsServer.valuesOverride | default dict) | toYaml | nindent 4 }}
+    {{- mergeOverwrite (dict "metrics-server" (dict "serviceMonitor" (dict "enabled" false) "livenessProbe" (dict "timeoutSeconds" 10) "readinessProbe" (dict "timeoutSeconds" 10))) (.Values.addons.metricsServer.valuesOverride | default dict) | toYaml | nindent 4 }}
   dependsOn:
   - name: {{ .Release.Name }}-cilium
     namespace: {{ .Release.Namespace }}
