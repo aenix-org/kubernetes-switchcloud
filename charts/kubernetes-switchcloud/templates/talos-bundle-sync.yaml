@@ -27,8 +27,8 @@ rules:
       - {{ .Release.Name }}-talos
     verbs: ["get", "patch"]
   - apiGroups: ["cluster.x-k8s.io"]
-    resources: ["machinedeployments"]
-    verbs: ["get", "list", "patch"]
+    resources: ["machines"]
+    verbs: ["get", "list", "delete"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -88,11 +88,6 @@ spec:
               until kubectl get secret "${RELEASE_NAME}-ca" -n "${NAMESPACE}" > /dev/null 2>&1; do
                 if [ "$(date +%s)" -ge "${DEADLINE}" ]; then
                   echo "Timed out waiting for ${RELEASE_NAME}-ca — will retry on next upgrade."
-                  echo "Unpausing MachineDeployments so cluster can provision..."
-                  kubectl get machinedeployment -n "${NAMESPACE}" \
-                    -l "cluster.x-k8s.io/cluster-name=${RELEASE_NAME}" \
-                    -o name | xargs -r -I{} kubectl patch {} -n "${NAMESPACE}" \
-                    --type=merge --patch='{"spec":{"paused":false}}'
                   exit 0
                 fi
                 sleep 5
@@ -102,11 +97,6 @@ spec:
               until kubectl get secret "${RELEASE_NAME}-talos" -n "${NAMESPACE}" > /dev/null 2>&1; do
                 if [ "$(date +%s)" -ge "${DEADLINE}" ]; then
                   echo "Timed out waiting for ${RELEASE_NAME}-talos — will retry on next upgrade."
-                  echo "Unpausing MachineDeployments so cluster can provision..."
-                  kubectl get machinedeployment -n "${NAMESPACE}" \
-                    -l "cluster.x-k8s.io/cluster-name=${RELEASE_NAME}" \
-                    -o name | xargs -r -I{} kubectl patch {} -n "${NAMESPACE}" \
-                    --type=merge --patch='{"spec":{"paused":false}}'
                   exit 0
                 fi
                 sleep 5
@@ -146,11 +136,10 @@ spec:
 
               echo "TalosBundle updated with correct Kamaji CA."
 
-              echo "Unpausing MachineDeployments..."
-              kubectl get machinedeployment -n "${NAMESPACE}" \
+              echo "Deleting existing Machines so CAPI recreates with correct bootstrap-data..."
+              kubectl get machine -n "${NAMESPACE}" \
                 -l "cluster.x-k8s.io/cluster-name=${RELEASE_NAME}" \
-                -o name | xargs -r -I{} kubectl patch {} -n "${NAMESPACE}" \
-                --type=merge --patch='{"spec":{"paused":false}}'
+                --output name | xargs --no-run-if-empty --replace={} kubectl delete {} -n "${NAMESPACE}"
 
               echo "Done."
 {{- end }}
