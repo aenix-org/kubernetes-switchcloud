@@ -29,13 +29,11 @@ spec:
     force: true
     remediation:
       retries: -1
+  uninstall:
+    timeout: 2m
   values:
     {{- mergeOverwrite (dict "metrics-server" (dict "serviceMonitor" (dict "enabled" false))) (.Values.addons.metricsServer.valuesOverride | default dict) | toYaml | nindent 4 }}
   dependsOn:
-  {{- if lookup "helm.toolkit.fluxcd.io/v2" "HelmRelease" .Release.Namespace .Release.Name }}
-  - name: {{ .Release.Name }}
-    namespace: {{ .Release.Namespace }}
-  {{- end }}
   - name: {{ .Release.Name }}-cilium
     namespace: {{ .Release.Namespace }}
 {{- end }}
