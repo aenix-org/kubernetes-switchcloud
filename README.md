@@ -226,7 +226,7 @@ spec:
 | `addons.ingressNginx.enabled` | `false` | ingress-nginx |
 | `addons.fluxcd.enabled` | `false` | FluxCD inside the tenant cluster |
 | `addons.openstackCCM.enabled` | `false` | OpenStack Cloud Controller Manager |
-| `addons.trustd.enabled` | `false` | talos-csr-signer (needed for `talosctl` on workers) |
+| `addons.trustd.networkPolicy.allowCIDRs` | `[]` | Source CIDRs for talos-csr-signer (always enabled) |
 
 ## Cluster Autoscaler
 
