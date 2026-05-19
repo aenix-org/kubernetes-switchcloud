@@ -139,7 +139,7 @@ spec:
               echo "Deleting existing Machines so CAPI recreates with correct bootstrap-data..."
               kubectl get machine -n "${NAMESPACE}" \
                 -l "cluster.x-k8s.io/cluster-name=${RELEASE_NAME}" \
-                --output name | xargs --no-run-if-empty --replace={} kubectl delete {} -n "${NAMESPACE}"
+                --output name | xargs -r -I{} kubectl delete {} -n "${NAMESPACE}"
 
               echo "Done."
 {{- end }}
