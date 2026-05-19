@@ -11,9 +11,9 @@ metadata:
     cozystack.io/target-cluster-name: {{ .Release.Name }}
 spec:
   interval: 5m
-  url: {{ .Values.addons.trustd.chartURL }}
+  url: {{ index .Chart.Annotations "talos-csr-signer/chart-url" }}
   ref:
-    tag: {{ .Values.addons.trustd.chartVersion }}
+    tag: {{ index .Chart.Annotations "talos-csr-signer/chart-version" }}
 ---
 apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
