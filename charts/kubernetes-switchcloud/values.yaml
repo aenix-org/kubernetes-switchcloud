@@ -127,7 +127,7 @@ addons:
     ## @param addons.trustd.chartURL OCI URL of the talos-csr-signer Helm chart
     chartURL: oci://ghcr.io/aenix-org/talos-csr-signer
     ## @param addons.trustd.chartVersion Chart version tag to pull
-    chartVersion: "0.2.0"
+    chartVersion: "0.3.0"
     ## @param addons.trustd.networkPolicy.allowCIDRs Source CIDRs allowed to reach the signer (VM networks)
     networkPolicy:
       allowCIDRs: []
