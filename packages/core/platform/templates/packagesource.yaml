@@ -1,18 +1,28 @@
 ---
+apiVersion: source.toolkit.fluxcd.io/v1beta2
+kind: OCIRepository
+metadata:
+  name: kubernetes-switchcloud-packages
+  namespace: cozy-system
+spec:
+  interval: 5m
+  url: oci://ghcr.io/aenix-org/kubernetes-switchcloud
+  ref:
+    semver: ">=0.3.0"
+---
 apiVersion: cozystack.io/v1alpha1
 kind: PackageSource
 metadata:
   name: kubernetes-switchcloud
   namespace: cozy-system
 spec:
-  url: oci://ghcr.io/aenix-org
-  charts:
-    - name: capi-bootstrap-talos
-      version: ">=0.1.0"
-      type: system
-    - name: capi-infraprovider-openstack
-      version: ">=0.1.0"
-      type: system
-    - name: kubernetes-switchcloud
-      version: ">=0.1.0"
-      type: app
+  sourceRef:
+    kind: OCIRepository
+    name: kubernetes-switchcloud-packages
+    namespace: cozy-system
+    path: /
+  variants:
+    - name: default
+      components:
+        - name: kubernetes-switchcloud
+          path: /
