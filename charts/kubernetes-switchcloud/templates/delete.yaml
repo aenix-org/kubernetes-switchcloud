@@ -51,7 +51,7 @@ metadata:
   name: {{ .Release.Name }}-cleanup
   annotations:
     helm.sh/hook: pre-delete
-    helm.sh/hook-delete-policy: hook-succeeded,before-hook-creation,hook-failed
+    helm.sh/hook-delete-policy: hook-succeeded,before-hook-creation
     helm.sh/hook-weight: "0"
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -59,7 +59,7 @@ kind: Role
 metadata:
   annotations:
     "helm.sh/hook": pre-delete
-    "helm.sh/hook-delete-policy": hook-succeeded,before-hook-creation,hook-failed
+    "helm.sh/hook-delete-policy": hook-succeeded,before-hook-creation
     "helm.sh/hook-weight": "5"
   name: {{ .Release.Name }}-cleanup
 rules:
@@ -97,7 +97,7 @@ kind: RoleBinding
 metadata:
   annotations:
     "helm.sh/hook": pre-delete
-    "helm.sh/hook-delete-policy": hook-succeeded,before-hook-creation,hook-failed
+    "helm.sh/hook-delete-policy": hook-succeeded,before-hook-creation
     "helm.sh/hook-weight": "5"
   name: {{ .Release.Name }}-cleanup
 roleRef:
