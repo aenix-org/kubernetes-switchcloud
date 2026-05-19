@@ -333,6 +333,7 @@ metadata:
     {{- end }}
 spec:
   clusterName: {{ $.Release.Name }}
+  paused: true
   replicas: {{ $group.minReplicas }}
   strategy:
     rollingUpdate:
