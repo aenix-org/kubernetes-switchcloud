@@ -30,9 +30,7 @@ spec:
     remediation:
       retries: -1
   values:
-    serviceMonitor:
-      enabled: false
-    {{- toYaml .Values.addons.metricsServer.valuesOverride | nindent 4 }}
+    {{- mergeOverwrite (dict "serviceMonitor" (dict "enabled" false)) (.Values.addons.metricsServer.valuesOverride | default dict) | toYaml | nindent 4 }}
   dependsOn:
   {{- if lookup "helm.toolkit.fluxcd.io/v2" "HelmRelease" .Release.Namespace .Release.Name }}
   - name: {{ .Release.Name }}
