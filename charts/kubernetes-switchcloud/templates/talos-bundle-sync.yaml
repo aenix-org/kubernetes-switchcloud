@@ -1,0 +1,120 @@
+{{- if .Values._namespace.etcd }}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ .Release.Name }}-talos-sync
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+    helm.sh/hook-weight: "0"
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ .Release.Name }}-talos-sync
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+    helm.sh/hook-weight: "0"
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames:
+      - {{ .Release.Name }}-ca
+      - {{ .Release.Name }}-talos
+    verbs: ["get", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ .Release.Name }}-talos-sync
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+    helm.sh/hook-weight: "0"
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ .Release.Name }}-talos-sync
+subjects:
+  - kind: ServiceAccount
+    name: {{ .Release.Name }}-talos-sync
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ .Release.Name }}-talos-sync
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-weight: "10"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  template:
+    metadata:
+      labels:
+        policy.cozystack.io/allow-to-apiserver: "true"
+    spec:
+      serviceAccountName: {{ .Release.Name }}-talos-sync
+      restartPolicy: Never
+      tolerations:
+        - key: CriticalAddonsOnly
+          operator: Exists
+        - key: node-role.kubernetes.io/control-plane
+          operator: Exists
+          effect: "NoSchedule"
+      containers:
+        - name: kubectl
+          image: docker.io/clastix/kubectl:v1.32
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -e
+              RELEASE_NAME="{{ .Release.Name }}"
+              NAMESPACE="{{ .Release.Namespace }}"
+
+              echo "Waiting for Kamaji CA secret ${RELEASE_NAME}-ca..."
+              until kubectl get secret "${RELEASE_NAME}-ca" -n "${NAMESPACE}" > /dev/null 2>&1; do
+                sleep 5
+              done
+
+              CA_CRT=$(kubectl get secret "${RELEASE_NAME}-ca" -n "${NAMESPACE}" -o jsonpath='{.data.tls\.crt}')
+              CA_KEY=$(kubectl get secret "${RELEASE_NAME}-ca" -n "${NAMESPACE}" -o jsonpath='{.data.tls\.key}')
+
+              CURRENT_CRT=$(kubectl get secret "${RELEASE_NAME}-talos" -n "${NAMESPACE}" \
+                -o jsonpath='{.data.bundle}' | base64 -d | \
+                awk '/^  k8s:/{f=1} f && /^    crt: /{print $2; exit}')
+
+              if [ "${CURRENT_CRT}" = "${CA_CRT}" ]; then
+                echo "TalosBundle already has correct Kamaji CA, nothing to do."
+                exit 0
+              fi
+
+              echo "Syncing Kamaji CA into TalosBundle..."
+              BUNDLE=$(kubectl get secret "${RELEASE_NAME}-talos" -n "${NAMESPACE}" \
+                -o jsonpath='{.data.bundle}' | base64 -d)
+
+              NEW_BUNDLE=$(printf '%s\n' "${BUNDLE}" | awk \
+                -v new_crt="${CA_CRT}" \
+                -v new_key="${CA_KEY}" '
+                /^  k8s:/        { in_k8s=1 }
+                /^  [a-z]/ && !/^  k8s:/ { in_k8s=0 }
+                in_k8s && /^    crt: / { print "    crt: " new_crt; next }
+                in_k8s && /^    key: / { print "    key: " new_key; next }
+                { print }
+              ')
+
+              NEW_BUNDLE_B64=$(printf '%s' "${NEW_BUNDLE}" | base64 -w 0)
+
+              kubectl patch secret "${RELEASE_NAME}-talos" -n "${NAMESPACE}" \
+                --type=merge \
+                --patch="{\"data\":{\"bundle\":\"${NEW_BUNDLE_B64}\"}}"
+
+              echo "TalosBundle updated with correct Kamaji CA."
+{{- end }}
