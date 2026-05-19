@@ -23,7 +23,7 @@ metadata:
     cozystack.io/target-cluster-name: {{ .Release.Name }}
     sharding.fluxcd.io/key: tenants
 spec:
-  releaseName: {{ .Release.Name }}
+  releaseName: {{ .Release.Name }}-trustd
   chartRef:
     kind: OCIRepository
     name: {{ .Release.Name }}-trustd
