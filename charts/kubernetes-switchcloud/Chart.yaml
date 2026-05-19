@@ -2,8 +2,11 @@ apiVersion: v2
 name: kubernetes-switchcloud
 description: Managed Kubernetes service on Switch Cloud (OpenStack + Talos)
 type: application
-version: 0.3.11
+version: 0.3.12
 appVersion: "1.32.6"
+annotations:
+  talos-csr-signer/chart-url: "oci://ghcr.io/aenix-org/talos-csr-signer"
+  talos-csr-signer/chart-version: "0.3.0"
 keywords:
   - kubernetes
   - openstack
