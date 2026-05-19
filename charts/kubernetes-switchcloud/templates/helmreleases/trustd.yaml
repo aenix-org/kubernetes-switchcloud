@@ -1,4 +1,4 @@
-{{- if and .Values.addons.trustd.enabled .Values._namespace.etcd }}
+{{- if .Values._namespace.etcd }}
 {{- $host := .Values._namespace.host }}
 {{- $clusterHostname := .Values.host | default (printf "%s.%s" .Release.Name $host) }}
 ---

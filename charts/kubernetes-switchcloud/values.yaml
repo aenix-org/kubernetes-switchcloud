@@ -121,9 +121,8 @@ addons:
   openstackCCM:
     enabled: false
     valuesOverride: {}
-  ## @param addons.trustd.enabled Deploy talos-csr-signer so Talos workers can obtain their API server certificate
+  ## @section trustd (always enabled — required for Talos worker bootstrap)
   trustd:
-    enabled: false
     ## @param addons.trustd.networkPolicy.allowCIDRs Source CIDRs allowed to reach the signer (VM networks)
     networkPolicy:
       allowCIDRs: []
