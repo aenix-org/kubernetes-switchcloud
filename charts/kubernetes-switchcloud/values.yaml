@@ -79,6 +79,9 @@ nodeGroups:
     kubelet:
       evictionHardMemory: "7%"
       evictionSoftMemory: "10%"
+    ## @param nodeGroups.md0.rootVolume Boot volume for flavors with zero local disk (required on Switch Cloud)
+    rootVolume:
+      sizeGiB: 50
     ## @param nodeGroups.md0.securityGroups OpenStack security groups
     securityGroups:
       - default
