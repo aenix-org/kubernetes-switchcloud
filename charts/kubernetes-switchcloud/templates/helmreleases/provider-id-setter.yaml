@@ -43,14 +43,11 @@ spec:
   upgrade:
     remediation:
       retries: -1
+  uninstall:
+    timeout: 2m
   values:
     apiServerOverride: {{ $apiServer }}
     {{- with .Values.addons.providerIdSetter.valuesOverride }}
     {{- toYaml . | nindent 4 }}
     {{- end }}
-  {{- if lookup "helm.toolkit.fluxcd.io/v2" "HelmRelease" .Release.Namespace .Release.Name }}
-  dependsOn:
-  - name: {{ .Release.Name }}
-    namespace: {{ .Release.Namespace }}
-  {{- end }}
 {{- end }}

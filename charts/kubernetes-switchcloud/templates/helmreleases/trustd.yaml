@@ -48,9 +48,4 @@ spec:
       allowCIDRs:
         {{- toYaml . | nindent 8 }}
     {{- end }}
-  {{- if lookup "helm.toolkit.fluxcd.io/v2" "HelmRelease" .Release.Namespace .Release.Name }}
-  dependsOn:
-  - name: {{ .Release.Name }}
-    namespace: {{ .Release.Namespace }}
-  {{- end }}
 {{- end }}
