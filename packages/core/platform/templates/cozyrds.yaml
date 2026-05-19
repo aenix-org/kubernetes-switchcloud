@@ -32,16 +32,16 @@ spec:
     exclude: []
     include:
       - resourceNames:
-          - kubernetes-switchcloud-{{ .name }}-admin-kubeconfig
+          - kubernetes-switchcloud-{{"{{"}} .name {{"}}"}}-admin-kubeconfig
   services:
     exclude: []
     include:
       - resourceNames:
-          - kubernetes-switchcloud-{{ .name }}
+          - kubernetes-switchcloud-{{"{{"}} .name {{"}}"}}
       - matchLabels:
-          cluster.x-k8s.io/cluster-name: kubernetes-switchcloud-{{ .name }}
+          cluster.x-k8s.io/cluster-name: kubernetes-switchcloud-{{"{{"}} .name {{"}}"}}
   ingresses:
     exclude: []
     include:
       - resourceNames:
-          - kubernetes-switchcloud-{{ .name }}
+          - kubernetes-switchcloud-{{"{{"}} .name {{"}}"}}
