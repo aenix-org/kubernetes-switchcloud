@@ -38,14 +38,25 @@ func (c *PeekConn) Read(b []byte) (int, error) {
 // and returns a PeekConn that replays the read bytes so the downstream
 // handler sees a complete unmodified stream.
 func ReadSNI(conn net.Conn) (string, net.Conn, error) {
-	// Read up to maxClientHelloSize bytes.
-	buf := make([]byte, maxClientHelloSize)
-	n, err := io.ReadAtLeast(conn, buf, 5) // at minimum TLS record header
-	if err != nil {
-		return "", nil, fmt.Errorf("read TLS record: %w", err)
+	// Read the 5-byte TLS record header first to learn the payload length.
+	header := make([]byte, 5)
+	if _, err := io.ReadFull(conn, header); err != nil {
+		return "", nil, fmt.Errorf("read TLS record header: %w", err)
 	}
-	buf = buf[:n]
 
+	recordLen := int(binary.BigEndian.Uint16(header[3:5]))
+	if recordLen > maxClientHelloSize {
+		return "", nil, fmt.Errorf("TLS record too large: %d bytes", recordLen)
+	}
+
+	// Read the full payload so we always have a complete ClientHello,
+	// even when it arrives in multiple TCP segments.
+	payload := make([]byte, recordLen)
+	if _, err := io.ReadFull(conn, payload); err != nil {
+		return "", nil, fmt.Errorf("read TLS record payload: %w", err)
+	}
+
+	buf := append(header, payload...)
 	sni, err := extractSNI(buf)
 	if err != nil {
 		return "", nil, err

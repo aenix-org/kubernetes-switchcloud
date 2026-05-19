@@ -1,11 +1,11 @@
 package sniproxy_test
 
 import (
+	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
-	"crypto/ed25519"
 	"encoding/pem"
 	"math/big"
 	"net"
@@ -135,5 +135,87 @@ func TestReadSNI_ReplaysBytesAfterPeek(t *testing.T) {
 
 	if ok := <-handshakeOK; !ok {
 		t.Error("TLS handshake failed after SNI peek — PeekConn did not replay bytes correctly")
+	}
+}
+
+// TestReadSNI_FragmentedClientHello verifies that ReadSNI correctly handles a
+// TLS ClientHello delivered in two separate TCP writes (simulating the real-world
+// case where a large ClientHello is split across multiple TCP segments).
+func TestReadSNI_FragmentedClientHello(t *testing.T) {
+	const hostname = "kubernetes-switchcloud-sc1.dev3.infra.aenix.org"
+
+	serverCert := makeSelfSignedCert(t, hostname)
+	serverTLS := &tls.Config{Certificates: []tls.Certificate{serverCert}}
+
+	// Use net.Pipe for synchronous, in-process I/O that we can control.
+	serverConn, clientRaw := net.Pipe()
+
+	// Capture a real TLS ClientHello by completing a dial against a temp listener.
+	captured := make(chan []byte, 1)
+	capLn, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer capLn.Close()
+
+	go func() {
+		raw, err := capLn.Accept()
+		if err != nil {
+			captured <- nil
+			return
+		}
+		buf := make([]byte, 8192)
+		n, _ := raw.Read(buf)
+		captured <- buf[:n]
+		raw.Close()
+	}()
+
+	go func() {
+		conn, _ := tls.Dial("tcp", capLn.Addr().String(), &tls.Config{
+			ServerName:         hostname,
+			InsecureSkipVerify: true, //nolint:gosec
+		})
+		if conn != nil {
+			conn.Close()
+		}
+	}()
+
+	hello := <-captured
+	if len(hello) < 6 {
+		t.Fatalf("captured ClientHello too short: %d bytes", len(hello))
+	}
+
+	// Split the ClientHello at byte 1343 (or half) to simulate fragmentation.
+	splitAt := 1343
+	if splitAt >= len(hello) {
+		splitAt = len(hello) / 2
+	}
+
+	// Server side: read SNI from the pipe fed in two chunks.
+	gotSNI := make(chan string, 1)
+	go func() {
+		sni, peek, err := sniproxy.ReadSNI(serverConn)
+		if err != nil {
+			gotSNI <- "error: " + err.Error()
+			serverConn.Close()
+			return
+		}
+		gotSNI <- sni
+		tlsConn := tls.Server(peek, serverTLS)
+		_ = tlsConn.Handshake()
+		tlsConn.Close()
+	}()
+
+	// Write first chunk, then second chunk.
+	if _, err := clientRaw.Write(hello[:splitAt]); err != nil {
+		t.Fatalf("write first chunk: %v", err)
+	}
+	if _, err := clientRaw.Write(hello[splitAt:]); err != nil {
+		t.Fatalf("write second chunk: %v", err)
+	}
+
+	sni := <-gotSNI
+	if sni != hostname {
+		t.Errorf("expected SNI %q, got %q", hostname, sni)
 	}
 }
