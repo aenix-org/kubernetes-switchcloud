@@ -119,7 +119,8 @@ spec:
   openstack:
     authURL: https://identity.api.zhw.cloud.switch.ch/v3
     regionName: zhw
-    existingSecret: my-cluster-openstack   # see "Credentials" below
+    applicationCredentialID: "<id>"
+    applicationCredentialSecret: "<secret>"
     network:
       id: "<openstack-network-uuid>"
     floatingIPNetwork: ""                  # leave empty — SNAT provides outbound internet
@@ -170,9 +171,25 @@ kubectl --kubeconfig my-cluster.yaml get nodes
 
 ## Credentials
 
-### Existing Secret (recommended)
+### Inline credentials (recommended)
 
-Create a `clouds.yaml` Secret in the same namespace as the cluster:
+Put the credentials directly in the CR spec. The chart creates a Secret in the
+cluster namespace automatically — no manual secret management needed, and each
+cluster can have its own credentials:
+
+```yaml
+spec:
+  openstack:
+    authURL: https://identity.api.zhw.cloud.switch.ch/v3
+    regionName: zhw
+    applicationCredentialID: "<id>"
+    applicationCredentialSecret: "<secret>"
+```
+
+### Existing Secret (advanced)
+
+If you prefer to manage the Secret outside the CR (e.g. via External Secrets
+Operator), create a `clouds.yaml` Secret in the same namespace as the cluster:
 
 ```bash
 kubectl create secret generic my-cluster-openstack \
@@ -188,22 +205,13 @@ clouds:
 '
 ```
 
-Reference it in the spec:
+Then reference it:
 
 ```yaml
 spec:
   openstack:
     existingSecret: my-cluster-openstack
     cloudName: openstack
-```
-
-### Inline credentials (simple / testing)
-
-```yaml
-spec:
-  openstack:
-    applicationCredentialID: "<id>"
-    applicationCredentialSecret: "<secret>"
 ```
 
 ## Addons
