@@ -16,9 +16,9 @@ spec:
     labels:
       sharding.fluxcd.io/key: tenants
     chartRef:
-      kind: HelmChart
-      name: kubernetes-switchcloud-app
-      namespace: cozy-public
+      kind: ExternalArtifact
+      name: kubernetes-switchcloud-default-kubernetes-switchcloud
+      namespace: cozy-system
   dashboard:
     category: IaaS
     singular: Kubernetes (Switch Cloud)

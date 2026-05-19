@@ -12,20 +12,6 @@ spec:
 apiVersion: source.toolkit.fluxcd.io/v1
 kind: HelmChart
 metadata:
-  name: kubernetes-switchcloud-app
-  namespace: cozy-public
-spec:
-  chart: kubernetes-switchcloud
-  version: "0.3.x"
-  sourceRef:
-    kind: HelmRepository
-    name: kubernetes-switchcloud
-    namespace: cozy-public
-  interval: 5m
----
-apiVersion: source.toolkit.fluxcd.io/v1
-kind: HelmChart
-metadata:
   name: kubernetes-switchcloud-capi-bootstrap-talos
   namespace: cozy-public
 spec:
