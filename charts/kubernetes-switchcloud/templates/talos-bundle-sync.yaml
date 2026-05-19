@@ -80,7 +80,12 @@ spec:
               NAMESPACE="{{ .Release.Namespace }}"
 
               echo "Waiting for Kamaji CA secret ${RELEASE_NAME}-ca..."
+              DEADLINE=$(( $(date +%s) + 600 ))
               until kubectl get secret "${RELEASE_NAME}-ca" -n "${NAMESPACE}" > /dev/null 2>&1; do
+                if [ "$(date +%s)" -ge "${DEADLINE}" ]; then
+                  echo "Timed out waiting for ${RELEASE_NAME}-ca — will retry on next upgrade."
+                  exit 0
+                fi
                 sleep 5
               done
 
