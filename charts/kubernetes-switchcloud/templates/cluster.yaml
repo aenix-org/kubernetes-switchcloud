@@ -331,6 +331,7 @@ metadata:
     {{- end }}
 spec:
   clusterName: {{ $.Release.Name }}
+  replicas: {{ $group.minReplicas }}
   strategy:
     rollingUpdate:
       maxSurge: 1
