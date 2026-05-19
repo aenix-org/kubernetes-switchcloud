@@ -29,26 +29,16 @@ spec:
             - -c
             - |
               set -e
-              echo "Step 1: Suspending all HelmReleases targeting cluster {{ .Release.Name }}"
-              for hr in $(kubectl -n {{ .Release.Namespace }} get helmreleases.helm.toolkit.fluxcd.io -l "cozystack.io/target-cluster-name={{ .Release.Name }}" -o name 2>/dev/null || true); do
-                if [ -n "$hr" ]; then
-                  echo "  Suspending $hr"
-                  kubectl -n {{ .Release.Namespace }} patch "$hr" \
-                    -p '{"spec": {"suspend": true}}' \
-                    --type=merge --field-manager=flux-client-side-apply
-                fi
-              done
-
-              echo "Step 2: Deleting HelmReleases targeting cluster {{ .Release.Name }}"
+              echo "Step 1: Deleting HelmReleases targeting cluster {{ .Release.Name }}"
               kubectl -n {{ .Release.Namespace }} delete helmreleases.helm.toolkit.fluxcd.io \
                 -l "cozystack.io/target-cluster-name={{ .Release.Name }}" \
-                --ignore-not-found=true --wait=true
+                --ignore-not-found=true
 
-              echo "Step 3: Deleting KamajiControlPlane {{ .Release.Name }}"
+              echo "Step 2: Deleting KamajiControlPlane {{ .Release.Name }}"
               kubectl -n {{ .Release.Namespace }} delete kamajicontrolplanes.controlplane.cluster.x-k8s.io {{ .Release.Name }} \
                 --ignore-not-found=true
 
-              echo "Step 4: Deleting TenantControlPlane {{ .Release.Name }}"
+              echo "Step 3: Deleting TenantControlPlane {{ .Release.Name }}"
               kubectl -n {{ .Release.Namespace }} delete tenantcontrolplanes.kamaji.clastix.io {{ .Release.Name }} \
                 --ignore-not-found=true
 
