@@ -23,7 +23,7 @@ metadata:
     cozystack.io/target-cluster-name: {{ .Release.Name }}
     sharding.fluxcd.io/key: tenants
 spec:
-  releaseName: talos-csr-signer
+  releaseName: {{ .Release.Name }}-csr-signer
   chartRef:
     kind: OCIRepository
     name: {{ .Release.Name }}-trustd
