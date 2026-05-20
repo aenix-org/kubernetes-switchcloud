@@ -32,15 +32,15 @@ spec:
               echo "Step 1: Deleting HelmReleases targeting cluster {{ .Release.Name }}"
               kubectl -n {{ .Release.Namespace }} delete helmreleases.helm.toolkit.fluxcd.io \
                 -l "cozystack.io/target-cluster-name={{ .Release.Name }}" \
-                --ignore-not-found=true
+                --ignore-not-found=true --wait=false
 
               echo "Step 2: Deleting KamajiControlPlane {{ .Release.Name }}"
               kubectl -n {{ .Release.Namespace }} delete kamajicontrolplanes.controlplane.cluster.x-k8s.io {{ .Release.Name }} \
-                --ignore-not-found=true
+                --ignore-not-found=true --wait=false
 
               echo "Step 3: Deleting TenantControlPlane {{ .Release.Name }}"
               kubectl -n {{ .Release.Namespace }} delete tenantcontrolplanes.kamaji.clastix.io {{ .Release.Name }} \
-                --ignore-not-found=true
+                --ignore-not-found=true --wait=false
 
               echo "Cleanup completed successfully"
 
