@@ -94,6 +94,9 @@ addons:
   cilium:
     enabled: true
     valuesOverride: {}
+  coredns:
+    enabled: true
+    valuesOverride: {}
   ingressNginx:
     enabled: false
     valuesOverride: {}
