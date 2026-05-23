@@ -6,6 +6,7 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"strings"
 	"sync"
 	"time"
 
@@ -49,6 +50,11 @@ type Router struct {
 	mu sync.RWMutex
 	// backends is keyed by label, then by SNI hostname.
 	backends map[string]map[string]string
+	// owned tracks which (label, hostname) entries each Service currently owns,
+	// keyed by namespace/name. Used to remove only this Service's entries on
+	// update or delete, instead of clobbering peer Services that target the
+	// same hostname for a different listener label.
+	owned map[string]map[string]string
 	// portByLabel is the target port name to look up on backend Services
 	// for that label.
 	portByLabel map[string]string
@@ -64,6 +70,7 @@ func NewRouter(ctx context.Context, client kubernetes.Interface, listeners []Lis
 
 	r := &Router{
 		backends:    make(map[string]map[string]string),
+		owned:       make(map[string]map[string]string),
 		portByLabel: make(map[string]string),
 		log:         log,
 	}
@@ -94,31 +101,57 @@ func (r *Router) upsert(obj interface{}) {
 	if !ok {
 		return
 	}
+	key := svc.Namespace + "/" + svc.Name
 	hostname := svc.Annotations[AnnotationHostname]
-	if hostname == "" {
-		return
-	}
+	ownerPrefix := fmt.Sprintf("%s.%s.svc:", svc.Name, svc.Namespace)
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	for label, table := range r.backends {
-		if svc.Labels[label] != "true" {
-			delete(table, hostname)
+	prior := r.owned[key]
+	next := make(map[string]string)
+
+	if hostname != "" {
+		for label, table := range r.backends {
+			if svc.Labels[label] != "true" {
+				continue
+			}
+			portName := r.portByLabel[label]
+			port := servicePort(svc, portName)
+			if port == 0 {
+				r.log.Warn("backend matches label but has no matching port", "service", svc.Name, "namespace", svc.Namespace, "label", label, "expectedPort", portName)
+				continue
+			}
+			backend := fmt.Sprintf("%s.%s.svc:%d", svc.Name, svc.Namespace, port)
+			next[label] = hostname
+			if existing, ok := table[hostname]; !ok || existing != backend {
+				table[hostname] = backend
+				r.log.Info("registered backend", "label", label, "hostname", hostname, "backend", backend)
+			}
+		}
+	}
+
+	// Drop entries this Service no longer owns (hostname changed, label dropped, port gone).
+	// Only delete if the current table entry belongs to this same Service to avoid
+	// clobbering another Service that took over the same (label, hostname).
+	for label, oldHost := range prior {
+		if next[label] == oldHost {
 			continue
 		}
-		portName := r.portByLabel[label]
-		port := servicePort(svc, portName)
-		if port == 0 {
-			r.log.Warn("backend matches label but has no matching port", "service", svc.Name, "namespace", svc.Namespace, "label", label, "expectedPort", portName)
-			delete(table, hostname)
+		table := r.backends[label]
+		if table == nil {
 			continue
 		}
-		backend := fmt.Sprintf("%s.%s.svc:%d", svc.Name, svc.Namespace, port)
-		if existing, ok := table[hostname]; !ok || existing != backend {
-			table[hostname] = backend
-			r.log.Info("registered backend", "label", label, "hostname", hostname, "backend", backend)
+		if cur, exists := table[oldHost]; exists && strings.HasPrefix(cur, ownerPrefix) {
+			delete(table, oldHost)
+			r.log.Info("removed backend", "label", label, "hostname", oldHost)
 		}
+	}
+
+	if len(next) == 0 {
+		delete(r.owned, key)
+	} else {
+		r.owned[key] = next
 	}
 }
 
@@ -127,18 +160,26 @@ func (r *Router) delete(obj interface{}) {
 	if !ok {
 		return
 	}
-	hostname := svc.Annotations[AnnotationHostname]
-	if hostname == "" {
-		return
-	}
+	key := svc.Namespace + "/" + svc.Name
+	ownerPrefix := fmt.Sprintf("%s.%s.svc:", svc.Name, svc.Namespace)
+
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	for label, table := range r.backends {
-		if _, ok := table[hostname]; ok {
+	prior, ok := r.owned[key]
+	if !ok {
+		return
+	}
+	for label, hostname := range prior {
+		table := r.backends[label]
+		if table == nil {
+			continue
+		}
+		if cur, exists := table[hostname]; exists && strings.HasPrefix(cur, ownerPrefix) {
 			delete(table, hostname)
 			r.log.Info("removed backend", "label", label, "hostname", hostname)
 		}
 	}
+	delete(r.owned, key)
 }
 
 // Backend returns the upstream host:port for the given listener label and SNI.
