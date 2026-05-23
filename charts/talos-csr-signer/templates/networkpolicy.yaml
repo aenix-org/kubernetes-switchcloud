@@ -20,9 +20,9 @@ spec:
         cidr: {{ . }}
     {{- end }}
     {{- end }}
-    # allow from talos-trustd-router pod in any namespace
+    # allow from talos-edge-router pod in any namespace
     - podSelector:
         matchLabels:
-          app: talos-trustd-router
+          app: talos-edge-router
       namespaceSelector: {}
 {{- end }}

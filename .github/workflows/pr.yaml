@@ -33,8 +33,8 @@ jobs:
       - name: Lint provider-id-setter
         run: helm lint charts/provider-id-setter/
 
-      - name: Lint talos-trustd-router
-        run: helm lint charts/talos-trustd-router/
+      - name: Lint talos-edge-router
+        run: helm lint charts/talos-edge-router/
 
       - name: Lint talos-csr-signer
         run: |

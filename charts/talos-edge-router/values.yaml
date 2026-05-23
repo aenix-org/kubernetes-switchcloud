@@ -1,0 +1,24 @@
+image:
+  repository: ghcr.io/aenix-org/talos-edge-router
+  tag: ""  # defaults to .Chart.AppVersion
+  pullPolicy: IfNotPresent
+
+# listeners defines the TCP listeners the router opens. Each listener gets its
+# own SNI routing table populated from Services that carry `label`.
+#
+# The Service rendered by this chart exposes one port per listener (named after
+# `.name`) so externalIPs carry traffic for every listener on the same hostname.
+listeners:
+  - name: trustd
+    port: 50001
+    label: talos.aenix.io/trustd
+  - name: konnectivity
+    port: 8132
+    label: talos.aenix.io/konnectivity
+
+resources:
+  requests:
+    cpu: 10m
+    memory: 32Mi
+  limits:
+    memory: 64Mi
