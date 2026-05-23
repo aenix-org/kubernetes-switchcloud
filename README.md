@@ -13,7 +13,7 @@ graph TD
         OCI --> PC
         PC --> CABPT["HelmRelease\ncapi-bootstrap-talos\ncozy-cluster-api"]
         PC --> CAPO["HelmRelease\ncapi-infraprovider-openstack\ncozy-cluster-api"]
-        PC --> TRUSTD["HelmRelease\ntalos-trustd-router\ncozy-talos-trustd-router"]
+        PC --> TRUSTD["HelmRelease\ntalos-edge-router\ncozy-talos-edge-router"]
         PC --> APPDEF["ApplicationDefinition\nkubernetes-switchcloud\n→ KubernetesSwitchcloud CR type"]
     end
 
@@ -29,13 +29,16 @@ graph TD
 
     subgraph bootstrap["3 · Worker bootstrap"]
         VM["Talos VM\n(Switch Cloud)"]
-        TR["talos-trustd-router\n:50001 SNI proxy"]
+        TR["talos-edge-router\n:50001 trustd · :8132 konnectivity\nSNI proxy"]
         SIGNER["talos-csr-signer\n(per cluster)"]
+        KSRV["konnectivity-server\n(Kamaji apiserver pod)"]
         API["Kamaji API server\n:443"]
         VM -- "CSR via trustd :50001" --> TR
         TR -- "route by SNI" --> SIGNER
         SIGNER -- "signed cert" --> VM
         VM -- "kubelet register" --> API
+        VM -- "konnectivity-agent :8132" --> TR
+        TR -- "route by SNI" --> KSRV
     end
 
     APPDEF --> CR
@@ -72,9 +75,10 @@ objects. The Kamaji API endpoint becomes
 
 Apply `init.yaml` once on the management cluster. This creates an `OCIRepository` pointing to
 the platform chart on GHCR and a `HelmRelease` that installs it. The platform chart deploys the
-CAPI providers for Talos bootstrapping and OpenStack infrastructure, the `talos-trustd-router`
-SNI proxy (required for Talos worker certificate signing), and the `ApplicationDefinition` that
-makes `KubernetesSwitchcloud` available as a resource type in the Cozystack API and dashboard.
+CAPI providers for Talos bootstrapping and OpenStack infrastructure, the `talos-edge-router`
+SNI proxy (required for Talos worker certificate signing and konnectivity tunnelling), and the
+`ApplicationDefinition` that makes `KubernetesSwitchcloud` available as a resource type in the
+Cozystack API and dashboard.
 
 ```bash
 kubectl apply --filename \
@@ -91,8 +95,8 @@ kubectl get helmreleases --namespace cozy-cluster-api
 # capi-bootstrap-talos          True
 # capi-infraprovider-openstack  True
 
-kubectl get helmreleases --namespace cozy-talos-trustd-router
-# talos-trustd-router           True
+kubectl get helmreleases --namespace cozy-talos-edge-router
+# talos-edge-router             True
 
 kubectl get applicationdefinition kubernetes-switchcloud
 # kubernetes-switchcloud        ...
@@ -254,7 +258,7 @@ charts/
   kubernetes-switchcloud/         Main application chart (CAPI cluster + addons)
   capi-bootstrap-talos/           CAPI Talos bootstrap provider
   capi-infraprovider-openstack/   CAPI OpenStack infrastructure provider
-  talos-trustd-router/            SNI proxy — routes Talos trustd CSR requests per cluster
+  talos-edge-router/              SNI proxy — per-cluster routing for trustd CSR and konnectivity
   talos-csr-signer/               Per-cluster Talos certificate signer
   provider-id-setter/             DaemonSet — sets spec.providerID from OpenStack IMDS
 packages/core/platform/           Platform Helm chart (installed by init.yaml)

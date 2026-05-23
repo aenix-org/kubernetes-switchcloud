@@ -3,10 +3,10 @@ WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /talos-trustd-router .
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /talos-edge-router .
 
 FROM scratch
-COPY --from=builder /talos-trustd-router /talos-trustd-router
+COPY --from=builder /talos-edge-router /talos-edge-router
 COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 USER 65532:65532
-ENTRYPOINT ["/talos-trustd-router"]
+ENTRYPOINT ["/talos-edge-router"]

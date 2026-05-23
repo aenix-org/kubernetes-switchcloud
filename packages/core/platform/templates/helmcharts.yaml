@@ -40,11 +40,11 @@ spec:
 apiVersion: source.toolkit.fluxcd.io/v1
 kind: HelmChart
 metadata:
-  name: kubernetes-switchcloud-talos-trustd-router
+  name: kubernetes-switchcloud-talos-edge-router
   namespace: cozy-public
 spec:
-  chart: talos-trustd-router
-  version: "0.1.x"
+  chart: talos-edge-router
+  version: "0.2.x"
   sourceRef:
     kind: HelmRepository
     name: kubernetes-switchcloud

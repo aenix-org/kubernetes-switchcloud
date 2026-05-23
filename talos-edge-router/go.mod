@@ -1,4 +1,4 @@
-module github.com/aenix-org/kubernetes-switchcloud/talos-trustd-router
+module github.com/aenix-org/kubernetes-switchcloud/talos-edge-router
 
 go 1.24
 

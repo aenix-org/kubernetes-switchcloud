@@ -4,7 +4,7 @@ image:
   pullPolicy: IfNotPresent
 
 # clusterHostname is the FQDN of the cluster's API endpoint.
-# The trustd-router uses this to match incoming SNI to this signer.
+# The talos-edge-router uses this to match incoming SNI to this signer.
 # Example: kubernetes-switchcloud-sc-test.dev3.infra.aenix.org
 clusterHostname: ""
 

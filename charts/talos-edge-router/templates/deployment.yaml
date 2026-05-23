@@ -1,20 +1,20 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: talos-trustd-router
+  name: talos-edge-router
   labels:
-    app: talos-trustd-router
+    app: talos-edge-router
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: talos-trustd-router
+      app: talos-edge-router
   template:
     metadata:
       labels:
-        app: talos-trustd-router
+        app: talos-edge-router
     spec:
-      serviceAccountName: talos-trustd-router
+      serviceAccountName: talos-edge-router
       securityContext:
         runAsNonRoot: true
         runAsUser: 65532
@@ -26,9 +26,11 @@ spec:
         image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
         imagePullPolicy: {{ .Values.image.pullPolicy }}
         args:
-        - --addr=:50001
+        {{- range .Values.listeners }}
+        - --listener={{ .name }}:{{ .port }}:{{ .label }}{{- if .targetPort }}:{{ .targetPort }}{{- end }}
+        {{- end }}
         - --sync-namespace=$(POD_NAMESPACE)
-        - --sync-service=talos-trustd-router
+        - --sync-service=talos-edge-router
         env:
         - name: POD_NAMESPACE
           valueFrom:
@@ -40,13 +42,15 @@ spec:
           capabilities:
             drop: [ALL]
         ports:
-        - name: trustd
-          containerPort: 50001
+        {{- range .Values.listeners }}
+        - name: {{ .name }}
+          containerPort: {{ .port }}
           protocol: TCP
+        {{- end }}
         resources:
           {{- toYaml .Values.resources | nindent 10 }}
         readinessProbe:
           tcpSocket:
-            port: 50001
+            port: {{ (index .Values.listeners 0).port }}
           initialDelaySeconds: 3
           periodSeconds: 10

@@ -1,0 +1,6 @@
+apiVersion: v2
+name: talos-edge-router
+description: SNI-based TCP proxy that routes per-cluster traffic (trustd, konnectivity) to in-cluster backends
+type: application
+version: 0.2.0
+appVersion: "0.5.0"

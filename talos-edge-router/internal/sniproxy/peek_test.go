@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/aenix-org/kubernetes-switchcloud/talos-trustd-router/internal/sniproxy"
+	"github.com/aenix-org/kubernetes-switchcloud/talos-edge-router/internal/sniproxy"
 )
 
 // makeSelfSignedCert returns a TLS certificate for the given hostname.

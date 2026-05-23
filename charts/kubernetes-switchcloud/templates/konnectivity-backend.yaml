@@ -1,0 +1,26 @@
+{{- $host := .Values._namespace.host }}
+{{- $clusterHostname := .Values.host | default (printf "%s.%s" .Release.Name $host) }}
+---
+# Service tagged for talos-edge-router's konnectivity listener. The router watches
+# Services with the talos.aenix.io/konnectivity label and proxies SNI-matched
+# traffic on port 8132 to the konnectivity-server container in the Kamaji
+# control-plane pod. Workers connect to <hostname>:8132 — the router's external
+# IPs (synced from management node IPs) handle the public side.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-konnectivity-backend
+  labels:
+    app: {{ .Release.Name }}-konnectivity-backend
+    talos.aenix.io/konnectivity: "true"
+    cozystack.io/target-cluster-name: {{ .Release.Name }}
+  annotations:
+    talos.aenix.io/cluster-hostname: {{ $clusterHostname | quote }}
+spec:
+  selector:
+    kamaji.clastix.io/name: {{ .Release.Name }}
+  ports:
+  - name: konnectivity
+    port: 8132
+    targetPort: 8132
+    protocol: TCP
