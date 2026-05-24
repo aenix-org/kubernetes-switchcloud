@@ -39,6 +39,16 @@ configPatches:
       modules:
         - name: spl
         - name: zfs
+  # Shorten TCP keepalive idle so middleboxes (Switch Cloud NAT, dev3 Cilium
+  # conntrack) don't evict long-lived TCP from konnectivity-agent. Defaults
+  # are 7200s/75s/9, which is too slow for cross-cloud paths. Applies via
+  # konnectivity-agent's hostNetwork (set under addons.konnectivity.agent).
+  - op: add
+    path: /machine/sysctls
+    value:
+      net.ipv4.tcp_keepalive_time: "60"
+      net.ipv4.tcp_keepalive_intvl: "10"
+      net.ipv4.tcp_keepalive_probes: "3"
   {{- $kamajiCA := lookup "v1" "Secret" $.Release.Namespace (printf "%s-ca" $.Release.Name) }}
   {{- if and $kamajiCA $kamajiCA.data (index $kamajiCA.data "tls.crt") }}
   - op: replace
@@ -189,6 +199,11 @@ spec:
       # is unreachable from workers running on Switch Cloud. Override it to the
       # cluster's public hostname; talos-edge-router exposes :8132 there.
       agent:
+        # Use host network so the agent's outbound TCP to konn-server picks
+        # up the node-level tcp_keepalive_* sysctls (set above), keeping the
+        # long-lived gRPC stream alive through Switch Cloud egress NAT and
+        # dev3 Cilium conntrack.
+        hostNetwork: true
         extraArgs:
         - --proxy-server-host={{ .Values.host | default (printf "%s.%s" .Release.Name $host) }}
         # Larger backlog so the dispatcher channel doesn't fill up during
