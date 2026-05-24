@@ -18,6 +18,15 @@ const (
 	maxClientHelloSize = 4096
 )
 
+// closeWriter is satisfied by *net.TCPConn (and *net.UnixConn) and lets the
+// proxy half-close the write side of a stream without tearing down the
+// read side. Required so that long-lived bidirectional streams (gRPC,
+// HTTP/2) don't get an RST on the still-active direction when one side
+// stops writing.
+type closeWriter interface {
+	CloseWrite() error
+}
+
 // PeekConn wraps a net.Conn and prepends already-read bytes back to the stream.
 type PeekConn struct {
 	net.Conn
@@ -32,6 +41,15 @@ func (c *PeekConn) Read(b []byte) (int, error) {
 		return n, nil
 	}
 	return c.Conn.Read(b)
+}
+
+// CloseWrite delegates to the wrapped connection so callers can use a
+// half-close to signal end-of-data without forcing a full RST.
+func (c *PeekConn) CloseWrite() error {
+	if cw, ok := c.Conn.(closeWriter); ok {
+		return cw.CloseWrite()
+	}
+	return c.Conn.Close()
 }
 
 // ReadSNI reads the TLS ClientHello from conn, extracts the SNI hostname,
