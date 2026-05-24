@@ -62,7 +62,9 @@ spec:
       # the node's resolver instead of via the in-cluster Service ClusterIP, which
       # is what this label is trying to unbreak.
       hostNetwork: true
-      dnsPolicy: ClusterFirstWithHostNet
+      # Default forces the pod's resolv.conf to come from the node (Talos
+      # NodeDNS) instead of the not-yet-working in-cluster CoreDNS.
+      dnsPolicy: Default
       containers:
       - name: labeler
         image: curlimages/curl:8.10.1

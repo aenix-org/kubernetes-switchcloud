@@ -2,5 +2,5 @@ apiVersion: v2
 name: tenant-apiserver-proxy
 description: Per-node TLS SNI-injecting proxy that fixes kubernetes.default.svc routing for tenant clusters whose apiserver is reached through an SSL-passthrough ingress on a different cloud
 type: application
-version: 0.1.2
+version: 0.1.3
 appVersion: "0.7.0"
