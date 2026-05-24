@@ -1,19 +1,6 @@
 {{- if and (.Values.addons.tenantApiserverProxy.enabled | default true) .Values._namespace.etcd }}
 {{- $host := .Values._namespace.host }}
 {{- $upstream := printf "%s:443" (.Values.host | default (printf "%s.%s" .Release.Name $host)) }}
-{{- $apiserverSecret := lookup "v1" "Secret" $.Release.Namespace (printf "%s-api-server-certificate" $.Release.Name) }}
-{{- $caSecret := lookup "v1" "Secret" $.Release.Namespace (printf "%s-ca" $.Release.Name) }}
-{{- /*
-The proxy's server cert + cluster CA come from Kamaji-managed Secrets in this
-namespace. They do not exist on the very first reconcile (Kamaji creates them
-alongside the apiserver pod), and `helm lint` has no cluster context to look
-them up at all. Skip rendering in both cases — Flux will reconcile again as
-soon as the Secrets appear.
-*/}}
-{{- if and $apiserverSecret $caSecret $apiserverSecret.data $caSecret.data (index $apiserverSecret.data "apiserver.crt") (index $apiserverSecret.data "apiserver.key") (index $caSecret.data "tls.crt") }}
-{{- $tlsCert := (index $apiserverSecret.data "apiserver.crt") | b64dec }}
-{{- $tlsKey  := (index $apiserverSecret.data "apiserver.key") | b64dec }}
-{{- $caCert  := (index $caSecret.data "tls.crt") | b64dec }}
 ---
 apiVersion: source.toolkit.fluxcd.io/v1beta2
 kind: OCIRepository
@@ -58,17 +45,29 @@ spec:
       retries: -1
   uninstall:
     timeout: 2m
+  # Cert + key + cluster CA are pulled at install time from the Kamaji-managed
+  # Secrets. Using `valuesFrom` instead of a `lookup` block at template-render
+  # time avoids a race: Kamaji creates the Secrets a few seconds after the
+  # umbrella chart is first rendered, so the previous `lookup` returned nil
+  # and the HR was skipped entirely (recoverable only by a manual reconcile
+  # once the Secrets appeared). With `valuesFrom`, the HR is always rendered
+  # and Flux retries the install until the Secrets are populated.
+  valuesFrom:
+  - kind: Secret
+    name: {{ .Release.Name }}-api-server-certificate
+    valuesKey: apiserver.crt
+    targetPath: tls.cert
+  - kind: Secret
+    name: {{ .Release.Name }}-api-server-certificate
+    valuesKey: apiserver.key
+    targetPath: tls.key
+  - kind: Secret
+    name: {{ .Release.Name }}-ca
+    valuesKey: tls.crt
+    targetPath: tls.ca
   values:
     upstream: {{ $upstream }}
-    tls:
-      cert: |
-        {{- $tlsCert | nindent 8 }}
-      key: |
-        {{- $tlsKey | nindent 8 }}
-      ca: |
-        {{- $caCert | nindent 8 }}
     {{- with .Values.addons.tenantApiserverProxy.valuesOverride }}
     {{- toYaml . | nindent 4 }}
     {{- end }}
-{{- end }}
 {{- end }}
