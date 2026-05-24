@@ -44,7 +44,7 @@ metadata:
   namespace: cozy-public
 spec:
   chart: talos-edge-router
-  version: "0.2.x"
+  version: "0.3.x"
   sourceRef:
     kind: HelmRepository
     name: kubernetes-switchcloud
