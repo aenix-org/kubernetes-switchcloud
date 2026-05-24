@@ -27,7 +27,7 @@ spec:
       # not-ready/uninitialised ones.
       containers:
       - name: dnat
-        image: alpine:3.20
+        image: registry.k8s.io/build-image/debian-iptables:bookworm-v1.0.0
         securityContext:
           privileged: true
           capabilities:
@@ -36,14 +36,13 @@ spec:
         - sh
         - -c
         - |
-          set -e
-          apk add --no-cache iptables >/dev/null
+          set -ex
           CHAIN=TENANT_APISERVER_PROXY
-          iptables -t nat -N $CHAIN 2>/dev/null || true
-          iptables -t nat -F $CHAIN
-          iptables -t nat -A $CHAIN -d {{ .Values.kubernetesServiceIP }}/32 -p tcp --dport {{ .Values.kubernetesServicePort }} -j DNAT --to-destination 127.0.0.1:{{ .Values.proxyPort }}
-          iptables -t nat -C OUTPUT -j $CHAIN 2>/dev/null || iptables -t nat -A OUTPUT -j $CHAIN
-          iptables -t nat -C PREROUTING -j $CHAIN 2>/dev/null || iptables -t nat -A PREROUTING -j $CHAIN
+          iptables-nft -t nat -N $CHAIN 2>/dev/null || true
+          iptables-nft -t nat -F $CHAIN
+          iptables-nft -t nat -A $CHAIN -d {{ .Values.kubernetesServiceIP }}/32 -p tcp --dport {{ .Values.kubernetesServicePort }} -j DNAT --to-destination 127.0.0.1:{{ .Values.proxyPort }}
+          iptables-nft -t nat -C OUTPUT -j $CHAIN 2>/dev/null || iptables-nft -t nat -I OUTPUT 1 -j $CHAIN
+          iptables-nft -t nat -C PREROUTING -j $CHAIN 2>/dev/null || iptables-nft -t nat -I PREROUTING 1 -j $CHAIN
           echo "DNAT installed for {{ .Values.kubernetesServiceIP }}:{{ .Values.kubernetesServicePort }} -> 127.0.0.1:{{ .Values.proxyPort }}"
           sleep infinity
       - name: proxy
