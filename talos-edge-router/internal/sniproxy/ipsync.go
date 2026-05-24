@@ -66,16 +66,16 @@ func syncExternalIPs(ctx context.Context, client kubernetes.Interface, lister li
 	seen := map[string]struct{}{}
 	var ips []string
 
-	// Node.status NodeExternalIP flaps on this cluster — the cloud-controller-
-	// manager updates it every couple of seconds, which churned
-	// Service.spec.externalIPs and forced Cilium to reprogram BPF rules
-	// continuously, tearing down active konnectivity gRPC streams. NodeInternalIP
-	// is stable, and Cilium needs to see at least one IP that lives on the
-	// node's NIC to advertise externalIPs there — so keep InternalIP and the
-	// stable talos.aenix.io/extra-ips annotation, drop ExternalIP.
+	// Include both InternalIP and ExternalIP. Dropping ExternalIP makes
+	// Cilium fail to advertise Service.spec.externalIPs on the host's
+	// public NIC (verified empirically: external probes returned
+	// ECONNREFUSED on port 8132 with InternalIP-only). The cloud-controller-
+	// manager flaps NodeExternalIP every couple of seconds on this cluster,
+	// which still churns Service.spec.externalIPs and disrupts long-lived
+	// streams — accepted as a separate problem to solve.
 	for _, node := range nodes {
 		for _, addr := range node.Status.Addresses {
-			if addr.Type != corev1.NodeInternalIP {
+			if addr.Type != corev1.NodeInternalIP && addr.Type != corev1.NodeExternalIP {
 				continue
 			}
 			if _, ok := seen[addr.Address]; !ok {
