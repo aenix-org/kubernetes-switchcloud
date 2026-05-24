@@ -195,7 +195,8 @@ spec:
         # bursts of dial requests (kubectl logs against many pods, metrics
         # aggregation polls). Default 150 saturates fast and blocks the
         # recv loop, which collapses the whole gRPC stream.
-        - --channel-size=10000
+        - --xfr-channel-size=10000
+        - --warn-on-channel-limit
   kubelet:
     cgroupfs: systemd
     preferredAddressTypes:
