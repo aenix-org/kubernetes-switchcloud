@@ -18,7 +18,11 @@ spec:
         app: tenant-apiserver-proxy
     spec:
       hostNetwork: true
-      dnsPolicy: ClusterFirstWithHostNet
+      # Default makes the pod use the node's resolv.conf so the proxy can
+      # resolve the upstream hostname through Talos NodeDNS even when the
+      # in-cluster CoreDNS is not yet ready (which is exactly the case this
+      # proxy exists to unbreak).
+      dnsPolicy: Default
       tolerations:
       - operator: Exists
       priorityClassName: system-node-critical
