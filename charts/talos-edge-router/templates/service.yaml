@@ -1,33 +1,14 @@
-{{- /*
-One Service per listener so each carries its own externalIPs and own
-externalTrafficPolicy. externalTrafficPolicy=Local pins traffic to the node
-that already hosts the matching DaemonSet pod — no SNAT, real source IP
-preserved, return path symmetric. Combined with per-node DaemonSet pods,
-this keeps long-lived bidirectional streams alive.
-*/}}
-{{- range .Values.listeners }}
----
 apiVersion: v1
 kind: Service
 metadata:
-  name: talos-edge-router-{{ .name }}
-  labels:
-    app: talos-edge-router
-    app.kubernetes.io/component: {{ .name }}
+  name: talos-edge-router
 spec:
-  # NodePort instead of ClusterIP so the API server accepts
-  # externalTrafficPolicy=Local at admission time (rejected on a plain
-  # ClusterIP Service whose externalIPs aren't populated yet by ipsync).
-  # The auto-allocated nodePort isn't exposed externally — clients reach
-  # us through externalIPs added later by the in-pod ipsync controller.
-  type: NodePort
-  externalTrafficPolicy: Local
   selector:
     app: talos-edge-router
-    app.kubernetes.io/component: {{ .name }}
   ports:
+  {{- range .Values.listeners }}
   - name: {{ .name }}
     port: {{ .port }}
     targetPort: {{ .name }}
     protocol: TCP
-{{- end }}
+  {{- end }}
