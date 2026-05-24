@@ -59,6 +59,9 @@ spec:
         args:
         - --listen=127.0.0.1:{{ .Values.proxyPort }}
         - --upstream={{ .Values.upstream }}
+        - --cert=/etc/tenant-apiserver-proxy/tls.crt
+        - --key=/etc/tenant-apiserver-proxy/tls.key
+        - --ca=/etc/tenant-apiserver-proxy/ca.crt
         securityContext:
           runAsNonRoot: true
           runAsUser: 65532
@@ -77,3 +80,18 @@ spec:
             host: 127.0.0.1
           initialDelaySeconds: 3
           periodSeconds: 10
+        volumeMounts:
+        - name: tls
+          mountPath: /etc/tenant-apiserver-proxy
+          readOnly: true
+      volumes:
+      - name: tls
+        secret:
+          secretName: tenant-apiserver-proxy-tls
+          items:
+          - key: tls.crt
+            path: tls.crt
+          - key: tls.key
+            path: tls.key
+          - key: ca.crt
+            path: ca.crt

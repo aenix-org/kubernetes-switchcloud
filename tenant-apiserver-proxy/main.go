@@ -1,18 +1,27 @@
-// Command tenant-apiserver-proxy listens on a local TCP port and forwards
-// every connection to an upstream Kubernetes apiserver, rewriting the TLS
-// ClientHello's server_name extension on the way out so the upstream
-// nginx-ingress (SSL passthrough) selects the right backend.
+// Command tenant-apiserver-proxy listens on a local TLS port and forwards
+// every connection to an upstream Kubernetes apiserver, doing the second
+// TLS handshake with the correct SNI so the upstream nginx-ingress (SSL
+// passthrough) routes to the right backend.
 //
-// The proxy never terminates TLS — it modifies only the bytes of the SNI
-// extension on the wire — so kubelet's client certificate continues all the
-// way to the apiserver, preserving mTLS authentication.
+// The proxy terminates TLS on both sides:
+//
+//  pod -> 10.95.0.1:443 (DNAT -> 127.0.0.1:7445)
+//      -> proxy presents its own cert (cluster-CA signed, IP:10.95.0.1 SAN)
+//      -> proxy decrypts, opens a NEW TLS connection to <upstream-host>:443
+//         with ServerName=<upstream-host> so SNI matches the ingress
+//      -> proxy verifies upstream cert against the cluster CA
+//      -> HTTP bytes are piped between the two TLS sessions
+//
+// Both TLS sessions negotiate h2/http1.1 so HTTP/2 streams pass through
+// transparently after the handshake.
 package main
 
 import (
 	"context"
-	"encoding/binary"
+	"crypto/tls"
+	"crypto/x509"
+	"errors"
 	"flag"
-	"fmt"
 	"io"
 	"log/slog"
 	"net"
@@ -20,22 +29,19 @@ import (
 	"os/signal"
 	"syscall"
 	"time"
-
-	"github.com/aenix-org/kubernetes-switchcloud/tenant-apiserver-proxy/internal/snirewrite"
 )
 
 const (
-	tlsRecordHeaderLen = 5
-	tlsRecordHandshake = 0x16
-	maxClientHelloLen  = 16384
-	dialTimeout        = 10 * time.Second
-	helloReadTimeout   = 10 * time.Second
+	dialTimeout      = 10 * time.Second
+	handshakeTimeout = 15 * time.Second
 )
 
 func main() {
-	listen := flag.String("listen", ":6443", "TCP listen address")
-	upstream := flag.String("upstream", "", "upstream apiserver host:port (host is also used as the rewritten SNI)")
-	sni := flag.String("sni", "", "override SNI value (defaults to the host part of -upstream)")
+	listen := flag.String("listen", "127.0.0.1:7445", "TLS listen address")
+	upstream := flag.String("upstream", "", "upstream apiserver host:port (host is used as TLS ServerName when dialling upstream)")
+	certFile := flag.String("cert", "/etc/tenant-apiserver-proxy/tls.crt", "path to the TLS cert presented to clients (signed by the cluster CA, SAN must include the workload kubernetes Service ClusterIP)")
+	keyFile := flag.String("key", "/etc/tenant-apiserver-proxy/tls.key", "path to the TLS key for -cert")
+	caFile := flag.String("ca", "/etc/tenant-apiserver-proxy/ca.crt", "CA bundle used to verify the upstream apiserver cert")
 	flag.Parse()
 
 	log := slog.New(slog.NewJSONHandler(os.Stdout, nil))
@@ -49,102 +55,94 @@ func main() {
 		log.Error("invalid -upstream", "err", err)
 		os.Exit(2)
 	}
-	sniValue := *sni
-	if sniValue == "" {
-		sniValue = upstreamHost
+
+	serverCert, err := tls.LoadX509KeyPair(*certFile, *keyFile)
+	if err != nil {
+		log.Error("load cert/key", "err", err)
+		os.Exit(1)
+	}
+
+	caPEM, err := os.ReadFile(*caFile)
+	if err != nil {
+		log.Error("load CA", "err", err)
+		os.Exit(1)
+	}
+	caPool := x509.NewCertPool()
+	if !caPool.AppendCertsFromPEM(caPEM) {
+		log.Error("CA file did not contain any PEM-encoded certificates", "path", *caFile)
+		os.Exit(1)
+	}
+
+	serverCfg := &tls.Config{
+		Certificates: []tls.Certificate{serverCert},
+		MinVersion:   tls.VersionTLS12,
+		NextProtos:   []string{"h2", "http/1.1"},
+	}
+	upstreamCfg := &tls.Config{
+		ServerName: upstreamHost,
+		RootCAs:    caPool,
+		MinVersion: tls.VersionTLS12,
+		NextProtos: []string{"h2", "http/1.1"},
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
 
-	lis, err := net.Listen("tcp", *listen)
+	lis, err := tls.Listen("tcp", *listen, serverCfg)
 	if err != nil {
 		log.Error("listen failed", "addr", *listen, "err", err)
 		os.Exit(1)
 	}
-	log.Info("proxy starting", "listen", *listen, "upstream", *upstream, "sni", sniValue)
+	log.Info("proxy starting", "listen", *listen, "upstream", *upstream, "sni", upstreamHost)
 
 	go func() {
 		<-ctx.Done()
-		lis.Close()
+		_ = lis.Close()
 	}()
 
 	for {
 		conn, err := lis.Accept()
 		if err != nil {
-			if ctx.Err() != nil {
+			if errors.Is(err, net.ErrClosed) || ctx.Err() != nil {
 				return
 			}
-			log.Warn("accept error", "err", err)
+			log.Warn("accept", "err", err)
 			continue
 		}
-		go handle(conn, *upstream, sniValue, log)
+		go handle(conn.(*tls.Conn), *upstream, upstreamCfg, log)
 	}
 }
 
-func handle(client net.Conn, upstream, sni string, log *slog.Logger) {
+func handle(client *tls.Conn, upstream string, upstreamCfg *tls.Config, log *slog.Logger) {
 	defer client.Close()
 
-	if err := client.SetReadDeadline(time.Now().Add(helloReadTimeout)); err != nil {
-		log.Warn("set deadline failed", "peer", client.RemoteAddr(), "err", err)
-		return
-	}
+	peer := client.RemoteAddr()
 
-	record, err := readClientHelloRecord(client)
-	if err != nil {
-		log.Warn("read ClientHello failed", "peer", client.RemoteAddr(), "err", err)
+	if err := client.SetDeadline(time.Now().Add(handshakeTimeout)); err != nil {
+		log.Warn("set deadline", "peer", peer, "err", err)
 		return
 	}
-	// Clear the read deadline so the proxied stream is not bounded by it.
-	if err := client.SetReadDeadline(time.Time{}); err != nil {
-		log.Warn("clear deadline failed", "peer", client.RemoteAddr(), "err", err)
+	if err := client.Handshake(); err != nil {
+		// Most of these are TCP probes from kubelet's readiness check —
+		// they hit the TLS listener, send no bytes, and time out. Log
+		// at debug-ish level by warn-only; the noise is acceptable.
+		log.Warn("client handshake", "peer", peer, "err", err)
 		return
 	}
+	_ = client.SetDeadline(time.Time{})
 
-	rewritten, err := snirewrite.Rewrite(record, sni)
+	dialer := &net.Dialer{Timeout: dialTimeout}
+	up, err := tls.DialWithDialer(dialer, "tcp", upstream, upstreamCfg)
 	if err != nil {
-		log.Warn("rewrite ClientHello failed", "peer", client.RemoteAddr(), "err", err)
-		return
-	}
-
-	up, err := net.DialTimeout("tcp", upstream, dialTimeout)
-	if err != nil {
-		log.Error("dial upstream failed", "upstream", upstream, "err", err)
+		log.Error("dial upstream", "upstream", upstream, "err", err)
 		return
 	}
 	defer up.Close()
 
-	if _, err := up.Write(rewritten); err != nil {
-		log.Warn("write rewritten ClientHello upstream failed", "err", err)
-		return
-	}
-
-	log.Info("proxying connection", "peer", client.RemoteAddr(), "upstream", upstream, "sni", sni)
+	log.Info("proxying", "peer", peer, "upstream", upstream, "client_alpn", client.ConnectionState().NegotiatedProtocol, "upstream_alpn", up.ConnectionState().NegotiatedProtocol)
 
 	done := make(chan struct{}, 2)
 	go func() { _, _ = io.Copy(up, client); done <- struct{}{} }()
 	go func() { _, _ = io.Copy(client, up); done <- struct{}{} }()
 	<-done
 }
-
-// readClientHelloRecord drains exactly one TLS handshake record from conn.
-// Returns the raw bytes (5-byte header + payload).
-func readClientHelloRecord(conn net.Conn) ([]byte, error) {
-	header := make([]byte, tlsRecordHeaderLen)
-	if _, err := io.ReadFull(conn, header); err != nil {
-		return nil, fmt.Errorf("read TLS record header: %w", err)
-	}
-	if header[0] != tlsRecordHandshake {
-		return nil, fmt.Errorf("first record is not a handshake (type=0x%02x)", header[0])
-	}
-	recordLen := int(binary.BigEndian.Uint16(header[3:5]))
-	if recordLen <= 0 || recordLen > maxClientHelloLen {
-		return nil, fmt.Errorf("invalid TLS record length: %d", recordLen)
-	}
-	payload := make([]byte, recordLen)
-	if _, err := io.ReadFull(conn, payload); err != nil {
-		return nil, fmt.Errorf("read TLS record payload: %w", err)
-	}
-	return append(header, payload...), nil
-}
-

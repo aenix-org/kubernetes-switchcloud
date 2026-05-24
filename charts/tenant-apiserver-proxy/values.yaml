@@ -3,6 +3,17 @@ image:
   tag: ""  # defaults to .Chart.AppVersion
   pullPolicy: IfNotPresent
 
+# tls.cert/tls.key — PEM-encoded server cert+key the proxy presents to pods
+# dialling kubernetes.default.svc. Must be signed by the cluster CA and carry
+# the workload kubernetes Service ClusterIP in its SAN (Kamaji's apiserver
+# cert already satisfies both).
+# tls.ca — cluster CA bundle used to verify the upstream apiserver cert.
+# All three are typically supplied by the parent chart via helm lookup.
+tls:
+  cert: ""
+  key: ""
+  ca: ""
+
 # upstream is the apiserver endpoint reachable from the worker node.
 # Required.
 # The host part is used as the SNI value injected into the ClientHello.
