@@ -1,0 +1,75 @@
+{{- /*
+Render one DaemonSet per listener so trustd (short-lived TLS) and konnectivity
+(long-lived bidirectional gRPC) are isolated and each lives on every node that
+carries an externalIP. Combined with externalTrafficPolicy=Local on the per-
+listener Service, this preserves the client's real source IP and keeps the
+return path symmetric — both required to keep konnectivity's gRPC stream from
+breaking under Cilium SNAT.
+*/}}
+{{- range .Values.listeners }}
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: talos-edge-router-{{ .name }}
+  labels:
+    app: talos-edge-router
+    app.kubernetes.io/component: {{ .name }}
+spec:
+  selector:
+    matchLabels:
+      app: talos-edge-router
+      app.kubernetes.io/component: {{ .name }}
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+  template:
+    metadata:
+      labels:
+        app: talos-edge-router
+        app.kubernetes.io/component: {{ .name }}
+    spec:
+      serviceAccountName: talos-edge-router
+      # Run on every node that may carry an externalIP advertised by the
+      # ipsync controller, including control-planes — otherwise
+      # externalTrafficPolicy=Local would silently drop traffic landing on
+      # a node without a local pod.
+      tolerations:
+      - operator: Exists
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+      - name: router
+        image: "{{ $.Values.image.repository }}:{{ $.Values.image.tag | default $.Chart.AppVersion }}"
+        imagePullPolicy: {{ $.Values.image.pullPolicy }}
+        args:
+        - --listener={{ .name }}:{{ .port }}:{{ .label }}{{- if .targetPort }}:{{ .targetPort }}{{- end }}
+        - --sync-namespace=$(POD_NAMESPACE)
+        - --sync-service=talos-edge-router-{{ .name }}
+        env:
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop: [ALL]
+        ports:
+        - name: {{ .name }}
+          containerPort: {{ .port }}
+          protocol: TCP
+        resources:
+          {{- toYaml $.Values.resources | nindent 10 }}
+        readinessProbe:
+          tcpSocket:
+            port: {{ .port }}
+          initialDelaySeconds: 3
+          periodSeconds: 10
+{{- end }}
