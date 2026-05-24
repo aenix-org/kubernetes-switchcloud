@@ -189,14 +189,6 @@ spec:
       # is unreachable from workers running on Switch Cloud. Override it to the
       # cluster's public hostname; talos-edge-router exposes :8132 there.
       agent:
-        # Run as Deployment with 3 replicas so the konn-server load-balances
-        # dial requests across three independent gRPC streams. With a single
-        # agent, burst load (kubectl exec WebSocket streams, metrics-server
-        # aggregation polls) saturated the one stream's HTTP/2 window and the
-        # whole tunnel stalled. Three parallel streams give roughly 3x
-        # throughput before per-stream flow control kicks in.
-        mode: Deployment
-        replicas: 3
         extraArgs:
         - --proxy-server-host={{ .Values.host | default (printf "%s.%s" .Release.Name $host) }}
         # Larger backlog so the dispatcher channel doesn't fill up during
