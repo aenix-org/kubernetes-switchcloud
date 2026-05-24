@@ -2,7 +2,7 @@ apiVersion: v2
 name: kubernetes-switchcloud
 description: Managed Kubernetes service on Switch Cloud (OpenStack + Talos)
 type: application
-version: 0.5.5
+version: 0.5.6
 appVersion: "1.32.6"
 annotations:
   talos-csr-signer/chart-url: "oci://ghcr.io/aenix-org/talos-csr-signer"
@@ -10,7 +10,7 @@ annotations:
   provider-id-setter/chart-url: "oci://ghcr.io/aenix-org/provider-id-setter"
   provider-id-setter/chart-version: "0.1.2"
   tenant-apiserver-proxy/chart-url: "oci://ghcr.io/aenix-org/tenant-apiserver-proxy"
-  tenant-apiserver-proxy/chart-version: "0.1.5"
+  tenant-apiserver-proxy/chart-version: "0.1.6"
 keywords:
   - kubernetes
   - openstack

@@ -43,7 +43,8 @@ spec:
           set -ex
           # Allow routing of traffic that hits DNAT-rewritten 127.0.0.1
           # from non-loopback interfaces (the same sysctl kube-proxy sets).
-          sysctl -w net.ipv4.conf.all.route_localnet=1
+          # Written via /proc to avoid pulling in procps.
+          echo 1 > /proc/sys/net/ipv4/conf/all/route_localnet
           CHAIN=TENANT_APISERVER_PROXY
           iptables-nft -t nat -N $CHAIN 2>/dev/null || true
           iptables-nft -t nat -F $CHAIN
