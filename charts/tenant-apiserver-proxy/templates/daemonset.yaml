@@ -1,0 +1,72 @@
+{{- if not .Values.upstream }}
+{{- fail "upstream is required" }}
+{{- end }}
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: tenant-apiserver-proxy
+  namespace: kube-system
+  labels:
+    app: tenant-apiserver-proxy
+spec:
+  selector:
+    matchLabels:
+      app: tenant-apiserver-proxy
+  template:
+    metadata:
+      labels:
+        app: tenant-apiserver-proxy
+    spec:
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      tolerations:
+      - operator: Exists
+      priorityClassName: system-node-critical
+      # The proxy must come up before the rest of the cluster can talk to
+      # kubernetes.default.svc, so we run on every node including
+      # not-ready/uninitialised ones.
+      containers:
+      - name: dnat
+        image: alpine:3.20
+        securityContext:
+          privileged: true
+          capabilities:
+            add: ["NET_ADMIN"]
+        command:
+        - sh
+        - -c
+        - |
+          set -e
+          apk add --no-cache iptables >/dev/null
+          CHAIN=TENANT_APISERVER_PROXY
+          iptables -t nat -N $CHAIN 2>/dev/null || true
+          iptables -t nat -F $CHAIN
+          iptables -t nat -A $CHAIN -d {{ .Values.kubernetesServiceIP }}/32 -p tcp --dport {{ .Values.kubernetesServicePort }} -j DNAT --to-destination 127.0.0.1:{{ .Values.proxyPort }}
+          iptables -t nat -C OUTPUT -j $CHAIN 2>/dev/null || iptables -t nat -A OUTPUT -j $CHAIN
+          iptables -t nat -C PREROUTING -j $CHAIN 2>/dev/null || iptables -t nat -A PREROUTING -j $CHAIN
+          echo "DNAT installed for {{ .Values.kubernetesServiceIP }}:{{ .Values.kubernetesServicePort }} -> 127.0.0.1:{{ .Values.proxyPort }}"
+          sleep infinity
+      - name: proxy
+        image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        args:
+        - --listen=127.0.0.1:{{ .Values.proxyPort }}
+        - --upstream={{ .Values.upstream }}
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 65532
+          runAsGroup: 65532
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop: [ALL]
+          seccompProfile:
+            type: RuntimeDefault
+        resources:
+          {{- toYaml .Values.resources | nindent 10 }}
+        readinessProbe:
+          tcpSocket:
+            port: {{ .Values.proxyPort }}
+            host: 127.0.0.1
+          initialDelaySeconds: 3
+          periodSeconds: 10

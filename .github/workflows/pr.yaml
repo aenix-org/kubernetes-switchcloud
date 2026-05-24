@@ -36,6 +36,9 @@ jobs:
       - name: Lint talos-edge-router
         run: helm lint charts/talos-edge-router/
 
+      - name: Lint tenant-apiserver-proxy
+        run: helm lint charts/tenant-apiserver-proxy/ --set 'upstream=test.example.com:443'
+
       - name: Lint talos-csr-signer
         run: |
           helm lint charts/talos-csr-signer/ \

@@ -109,6 +109,10 @@ addons:
   ## @section providerIdSetter (always enabled — required for CAPI node mapping)
   providerIdSetter:
     valuesOverride: {}
+  ## @section tenantApiserverProxy (per-node TLS SNI injector for kubernetes.default.svc ClusterIP)
+  tenantApiserverProxy:
+    enabled: true
+    valuesOverride: {}
   ## @section trustd (always enabled — required for Talos worker bootstrap)
   trustd:
     ## @param addons.trustd.networkPolicy.allowCIDRs Source CIDRs allowed to reach the signer (VM networks)

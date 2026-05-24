@@ -20,20 +20,19 @@ configPatches:
       {{- if ($.Values.addons.openstackCCM | default dict).enabled }}
       cloud-provider: "external"
       {{- end }}
-  # KubePrism: node-local apiserver load balancer on 127.0.0.1:7445.
-  # Required for cross-cloud workers — pods, kubelet, and kube-proxy use the
-  # loopback endpoint instead of the in-cluster ClusterIP, whose Endpoints
-  # Kamaji writes pointing at a management-cluster IP that is unreachable
-  # from Switch Cloud VMs.
+  # KubePrism intentionally disabled: kubelet would dial https://127.0.0.1:7445
+  # and the upstream nginx ingress (SSL passthrough) cannot select a backend
+  # by SNI=127.0.0.1, so it returns its default "ingress.local" fake cert and
+  # the kubelet TLS handshake fails. With KubePrism off, kubelet goes straight
+  # to cluster.controlPlane.endpoint and the public hostname matches both
+  # the ingress and the apiserver cert SANs. Pod-network access to the
+  # workload apiserver is handled separately by tenant-apiserver-proxy.
   - op: replace
     path: /machine/features/kubePrism/enabled
-    value: true
-  - op: replace
-    path: /machine/features/kubePrism/port
-    value: 7445
+    value: false
   - op: replace
     path: /machine/features/hostDNS/forwardKubeDNSToHost
-    value: true
+    value: false
   - op: add
     path: /machine/kernel
     value:
@@ -189,11 +188,7 @@ spec:
       # Kamaji defaults --proxy-server-host to the in-cluster ClusterIP, which
       # is unreachable from workers running on Switch Cloud. Override it to the
       # cluster's public hostname; talos-edge-router exposes :8132 there.
-      # hostNetwork: true so the agent dials the apiserver via Talos KubePrism
-      # (127.0.0.1:7445) and resolves the public hostname through the node's
-      # DNS resolver instead of the not-yet-available in-cluster CoreDNS.
       agent:
-        hostNetwork: true
         extraArgs:
         - --proxy-server-host={{ .Values.host | default (printf "%s.%s" .Release.Name $host) }}
   kubelet:

@@ -1,0 +1,12 @@
+FROM golang:1.24-alpine AS builder
+WORKDIR /src
+COPY go.mod go.sum* ./
+RUN go mod download
+COPY . .
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /tenant-apiserver-proxy .
+
+FROM scratch
+COPY --from=builder /tenant-apiserver-proxy /tenant-apiserver-proxy
+COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
+USER 65532:65532
+ENTRYPOINT ["/tenant-apiserver-proxy"]

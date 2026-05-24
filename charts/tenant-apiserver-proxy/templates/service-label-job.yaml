@@ -1,0 +1,70 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: tenant-apiserver-proxy-labeler
+  namespace: kube-system
+  annotations:
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-weight: "-5"
+    helm.sh/hook-delete-policy: hook-succeeded,before-hook-creation
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: tenant-apiserver-proxy-labeler
+  annotations:
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-weight: "-5"
+    helm.sh/hook-delete-policy: hook-succeeded,before-hook-creation
+rules:
+- apiGroups: [""]
+  resources: [services]
+  verbs: [get, patch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: tenant-apiserver-proxy-labeler
+  annotations:
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-weight: "-5"
+    helm.sh/hook-delete-policy: hook-succeeded,before-hook-creation
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: tenant-apiserver-proxy-labeler
+subjects:
+- kind: ServiceAccount
+  name: tenant-apiserver-proxy-labeler
+  namespace: kube-system
+---
+# Marks default/kubernetes with service-proxy-name so kube-proxy / Cilium
+# stop programming its ClusterIP redirect. After this, the iptables OUTPUT
+# DNAT rule installed by the DaemonSet is the one that actually steers
+# traffic for that ClusterIP.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: tenant-apiserver-proxy-label-kubernetes-svc
+  namespace: kube-system
+  annotations:
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-weight: "0"
+    helm.sh/hook-delete-policy: hook-succeeded,before-hook-creation
+spec:
+  backoffLimit: 5
+  ttlSecondsAfterFinished: 600
+  template:
+    spec:
+      serviceAccountName: tenant-apiserver-proxy-labeler
+      restartPolicy: OnFailure
+      containers:
+      - name: kubectl
+        image: ghcr.io/aenix-org/kubectl:1.32.6
+        command:
+        - sh
+        - -c
+        - |
+          kubectl label svc --namespace default kubernetes \
+            service.kubernetes.io/service-proxy-name={{ .Values.serviceProxyName }} \
+            --overwrite
