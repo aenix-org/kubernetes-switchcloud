@@ -20,12 +20,20 @@ configPatches:
       {{- if ($.Values.addons.openstackCCM | default dict).enabled }}
       cloud-provider: "external"
       {{- end }}
+  # KubePrism: node-local apiserver load balancer on 127.0.0.1:7445.
+  # Required for cross-cloud workers — pods, kubelet, and kube-proxy use the
+  # loopback endpoint instead of the in-cluster ClusterIP, whose Endpoints
+  # Kamaji writes pointing at a management-cluster IP that is unreachable
+  # from Switch Cloud VMs.
   - op: replace
     path: /machine/features/kubePrism/enabled
-    value: false
+    value: true
+  - op: replace
+    path: /machine/features/kubePrism/port
+    value: 7445
   - op: replace
     path: /machine/features/hostDNS/forwardKubeDNSToHost
-    value: false
+    value: true
   - op: add
     path: /machine/kernel
     value:
