@@ -15,7 +15,12 @@ metadata:
     app: talos-edge-router
     app.kubernetes.io/component: {{ .name }}
 spec:
-  type: ClusterIP
+  # NodePort instead of ClusterIP so the API server accepts
+  # externalTrafficPolicy=Local at admission time (rejected on a plain
+  # ClusterIP Service whose externalIPs aren't populated yet by ipsync).
+  # The auto-allocated nodePort isn't exposed externally — clients reach
+  # us through externalIPs added later by the in-pod ipsync controller.
+  type: NodePort
   externalTrafficPolicy: Local
   selector:
     app: talos-edge-router
