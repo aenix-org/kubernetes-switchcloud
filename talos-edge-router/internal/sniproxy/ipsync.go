@@ -10,7 +10,6 @@ import (
 	"strings"
 	"time"
 
-	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/types"
@@ -66,15 +65,13 @@ func syncExternalIPs(ctx context.Context, client kubernetes.Interface, lister li
 	seen := map[string]struct{}{}
 	var ips []string
 
+	// We deliberately ignore Node.status.addresses (InternalIP, ExternalIP).
+	// On this cluster the cloud-controller-manager flaps those addresses every
+	// few seconds, which churned Service.spec.externalIPs and forced Cilium to
+	// reprogram its BPF rules continuously, tearing down active konnectivity
+	// gRPC streams. The talos.aenix.io/extra-ips annotation is stable, so we
+	// drive externalIPs from that alone.
 	for _, node := range nodes {
-		for _, addr := range node.Status.Addresses {
-			if addr.Type == corev1.NodeInternalIP || addr.Type == corev1.NodeExternalIP {
-				if _, ok := seen[addr.Address]; !ok {
-					seen[addr.Address] = struct{}{}
-					ips = append(ips, addr.Address)
-				}
-			}
-		}
 		if extra := node.Annotations[AnnotationExtraIPs]; extra != "" {
 			for _, ip := range strings.Split(extra, ",") {
 				ip = strings.TrimSpace(ip)
