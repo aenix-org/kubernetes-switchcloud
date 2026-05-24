@@ -230,9 +230,28 @@ func (r *Router) Handle(listenerName, label string, conn net.Conn) {
 
 	r.log.Info("proxying connection", "listener", listenerName, "sni", sni, "peer", conn.RemoteAddr(), "backend", backend)
 
+	// Pipe bytes in both directions and wait for BOTH copies to finish.
+	// When one direction returns (EOF or error), half-close the write side
+	// of the opposite peer so it observes EOF instead of an RST. This
+	// preserves long-lived bidirectional streams (gRPC for konnectivity,
+	// trustd CSR signing) where one side may pause writes for tens of
+	// seconds while the other continues sending.
 	done := make(chan struct{}, 2)
-	go func() { _, _ = io.Copy(upstream, peekConn); done <- struct{}{} }()
-	go func() { _, _ = io.Copy(peekConn, upstream); done <- struct{}{} }()
+	go func() {
+		_, _ = io.Copy(upstream, peekConn)
+		if cw, ok := upstream.(closeWriter); ok {
+			_ = cw.CloseWrite()
+		}
+		done <- struct{}{}
+	}()
+	go func() {
+		_, _ = io.Copy(peekConn, upstream)
+		if pc, ok := peekConn.(*PeekConn); ok {
+			_ = pc.CloseWrite()
+		}
+		done <- struct{}{}
+	}()
+	<-done
 	<-done
 }
 
