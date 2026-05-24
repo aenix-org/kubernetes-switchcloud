@@ -10,7 +10,7 @@ annotations:
   provider-id-setter/chart-url: "oci://ghcr.io/aenix-org/provider-id-setter"
   provider-id-setter/chart-version: "0.1.2"
   tenant-apiserver-proxy/chart-url: "oci://ghcr.io/aenix-org/tenant-apiserver-proxy"
-  tenant-apiserver-proxy/chart-version: "0.1.0"
+  tenant-apiserver-proxy/chart-version: "0.1.1"
 keywords:
   - kubernetes
   - openstack

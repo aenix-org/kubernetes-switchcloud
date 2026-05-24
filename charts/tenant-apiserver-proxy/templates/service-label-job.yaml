@@ -52,19 +52,30 @@ metadata:
     helm.sh/hook-weight: "0"
     helm.sh/hook-delete-policy: hook-succeeded,before-hook-creation
 spec:
-  backoffLimit: 5
+  backoffLimit: 10
   ttlSecondsAfterFinished: 600
   template:
     spec:
       serviceAccountName: tenant-apiserver-proxy-labeler
       restartPolicy: OnFailure
+      # hostNetwork so we can reach the apiserver via its public hostname through
+      # the node's resolver instead of via the in-cluster Service ClusterIP, which
+      # is what this label is trying to unbreak.
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
       containers:
-      - name: kubectl
-        image: ghcr.io/aenix-org/kubectl:1.32.6
+      - name: labeler
+        image: curlimages/curl:8.10.1
         command:
         - sh
         - -c
         - |
-          kubectl label svc --namespace default kubernetes \
-            service.kubernetes.io/service-proxy-name={{ .Values.serviceProxyName }} \
-            --overwrite
+          set -e
+          TOKEN=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
+          CA=/var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+          curl -sS --cacert $CA -H "Authorization: Bearer $TOKEN" \
+            -H "Content-Type: application/strategic-merge-patch+json" \
+            -X PATCH \
+            --data '{"metadata":{"labels":{"service.kubernetes.io/service-proxy-name":"{{ .Values.serviceProxyName }}"}}}' \
+            "https://{{ .Values.apiserverHostname | default (regexReplaceAll ":\\d+$" .Values.upstream "") }}:{{ .Values.apiserverPort | default 443 }}/api/v1/namespaces/default/services/kubernetes" \
+            -o /dev/null -w 'http=%{http_code}\n'

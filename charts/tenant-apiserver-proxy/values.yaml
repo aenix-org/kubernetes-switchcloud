@@ -8,6 +8,14 @@ image:
 # The host part is used as the SNI value injected into the ClientHello.
 upstream: ""
 
+# apiserverHostname / apiserverPort are used by the one-shot Job that labels
+# default/kubernetes so kube-proxy / Cilium drop their ClusterIP redirect.
+# The Job runs on hostNetwork so it can reach the apiserver through the public
+# FQDN instead of the not-yet-working ClusterIP.
+# Defaults to the host part of `upstream`.
+apiserverHostname: ""
+apiserverPort: 443
+
 # kubernetesServiceIP is the cluster IP of the workload-cluster `kubernetes`
 # Service (typically the first IP of the Service CIDR). The DaemonSet's
 # init container installs an iptables OUTPUT DNAT rule that redirects
