@@ -141,8 +141,24 @@ func handle(client *tls.Conn, upstream string, upstreamCfg *tls.Config, log *slo
 
 	log.Info("proxying", "peer", peer, "upstream", upstream, "client_alpn", client.ConnectionState().NegotiatedProtocol, "upstream_alpn", up.ConnectionState().NegotiatedProtocol)
 
+	// Pipe bytes in both directions and wait for BOTH copies to finish.
+	// When one direction returns (EOF or error), CloseWrite the opposite
+	// peer so it observes a graceful close_notify instead of an RST. This
+	// preserves long-lived bidirectional streams (HTTP/2 streams from
+	// metrics-server aggregation responses, kubelet status streaming,
+	// kubectl exec WebSocket) where one side may pause writes for tens of
+	// seconds while the other continues sending.
 	done := make(chan struct{}, 2)
-	go func() { _, _ = io.Copy(up, client); done <- struct{}{} }()
-	go func() { _, _ = io.Copy(client, up); done <- struct{}{} }()
+	go func() {
+		_, _ = io.Copy(up, client)
+		_ = up.CloseWrite()
+		done <- struct{}{}
+	}()
+	go func() {
+		_, _ = io.Copy(client, up)
+		_ = client.CloseWrite()
+		done <- struct{}{}
+	}()
+	<-done
 	<-done
 }
