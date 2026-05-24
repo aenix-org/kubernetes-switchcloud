@@ -191,6 +191,11 @@ spec:
       agent:
         extraArgs:
         - --proxy-server-host={{ .Values.host | default (printf "%s.%s" .Release.Name $host) }}
+        # Larger backlog so the dispatcher channel doesn't fill up during
+        # bursts of dial requests (kubectl logs against many pods, metrics
+        # aggregation polls). Default 150 saturates fast and blocks the
+        # recv loop, which collapses the whole gRPC stream.
+        - --channel-size=10000
   kubelet:
     cgroupfs: systemd
     preferredAddressTypes:
