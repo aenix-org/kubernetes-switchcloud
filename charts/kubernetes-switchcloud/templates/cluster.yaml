@@ -196,15 +196,13 @@ spec:
       server:
         port: 8132
         extraArgs:
-        # gRPC keepalive PING every 30s + 10s timeout so the server actually
-        # notices when an agent's TCP dies (RST through Switch Cloud egress
-        # NAT or dev3 conntrack). Without this the server held stale backend
-        # entries for up to 7200s of TCP-keepalive default while the agent
-        # had long since reconnected; some dial requests still got routed
-        # to the dead backend and hung 30s before frontend_close.
+        # gRPC keepalive PING every 30s so the server actually notices when
+        # an agent's TCP dies (RST through Switch Cloud egress NAT or dev3
+        # conntrack). Without this the server held stale backend entries
+        # for up to 7200s of TCP-keepalive default while the agent had long
+        # since reconnected; some dial requests still got routed to the dead
+        # backend and hung 30s before frontend_close.
         - --keepalive-time=30s
-        # Verbose enough to see Received DIAL_REQ / Stream cancelled events.
-        - --v=4
       # Kamaji defaults --proxy-server-host to the in-cluster ClusterIP, which
       # is unreachable from workers running on Switch Cloud. Override it to the
       # cluster's public hostname; talos-edge-router exposes :8132 there.
