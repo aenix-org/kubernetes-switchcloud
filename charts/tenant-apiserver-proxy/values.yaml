@@ -1,0 +1,33 @@
+image:
+  repository: ghcr.io/aenix-org/tenant-apiserver-proxy
+  tag: ""  # defaults to .Chart.AppVersion
+  pullPolicy: IfNotPresent
+
+# upstream is the apiserver endpoint reachable from the worker node.
+# Required.
+# The host part is used as the SNI value injected into the ClientHello.
+upstream: ""
+
+# kubernetesServiceIP is the cluster IP of the workload-cluster `kubernetes`
+# Service (typically the first IP of the Service CIDR). The DaemonSet's
+# init container installs an iptables OUTPUT DNAT rule that redirects
+# traffic destined for `<kubernetesServiceIP>:<kubernetesServicePort>` to the
+# local proxy port.
+kubernetesServiceIP: "10.95.0.1"
+kubernetesServicePort: 443
+
+# proxyPort is the host port the proxy listens on (bound to 127.0.0.1 only).
+proxyPort: 7445
+
+# serviceProxyName must match the value of the
+# `service.kubernetes.io/service-proxy-name` label set on the
+# default/kubernetes Service so kube-proxy and Cilium ignore that Service
+# and the iptables OUTPUT DNAT rule is not shadowed.
+serviceProxyName: tenant-apiserver-proxy
+
+resources:
+  requests:
+    cpu: 10m
+    memory: 32Mi
+  limits:
+    memory: 64Mi
