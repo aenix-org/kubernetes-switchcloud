@@ -25,24 +25,37 @@ import (
 // Example: talos.aenix.io/extra-ips: "129.153.33.233,150.136.153.190"
 const AnnotationExtraIPs = "talos.aenix.io/extra-ips"
 
+// SyncDebounceInterval is the minimum spacing between Service externalIPs
+// patches. Cloud-controller-managers that flap node addresses every few
+// seconds would otherwise churn the Service and force Cilium to reprogram
+// its BPF rules continuously, tearing down long-lived gRPC streams. New
+// nodes join rarely enough that 15s lag is fine.
+const SyncDebounceInterval = 30 * time.Second
+
 // RunIPSyncer watches Node objects and keeps the named Service's externalIPs
 // in sync with the union of all node InternalIP, ExternalIP, and extra-IPs annotations.
+// Updates are rate-limited to at most one Service patch per SyncDebounceInterval.
 // It blocks until ctx is cancelled.
 func RunIPSyncer(ctx context.Context, client kubernetes.Interface, namespace, serviceName string, log *slog.Logger) error {
 	factory := informers.NewSharedInformerFactory(client, 30*time.Second)
 	nodeLister := factory.Core().V1().Nodes().Lister()
 	nodeInformer := factory.Core().V1().Nodes().Informer()
 
-	sync := func(_ interface{}) {
-		if err := syncExternalIPs(ctx, client, nodeLister, namespace, serviceName, log); err != nil {
-			log.Error("failed to sync externalIPs", "err", err)
+	// Coalesce node events through a 1-slot trigger channel: many events
+	// during a flap collapse into a single sync; the goroutine below enforces
+	// the minimum interval between actual Service patches.
+	trigger := make(chan struct{}, 1)
+	enqueue := func(_ interface{}) {
+		select {
+		case trigger <- struct{}{}:
+		default:
 		}
 	}
 
 	nodeInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
-		AddFunc:    sync,
-		UpdateFunc: func(_, obj interface{}) { sync(obj) },
-		DeleteFunc: sync,
+		AddFunc:    enqueue,
+		UpdateFunc: func(_, obj interface{}) { enqueue(obj) },
+		DeleteFunc: enqueue,
 	})
 
 	factory.Start(ctx.Done())
@@ -50,11 +63,40 @@ func RunIPSyncer(ctx context.Context, client kubernetes.Interface, namespace, se
 		return fmt.Errorf("timed out waiting for node cache sync")
 	}
 
-	// Initial sync after cache is warm.
-	sync(nil)
+	doSync := func() {
+		if err := syncExternalIPs(ctx, client, nodeLister, namespace, serviceName, log); err != nil {
+			log.Error("failed to sync externalIPs", "err", err)
+		}
+	}
 
-	<-ctx.Done()
-	return nil
+	doSync()
+	lastSync := time.Now()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-trigger:
+			elapsed := time.Since(lastSync)
+			if elapsed < SyncDebounceInterval {
+				timer := time.NewTimer(SyncDebounceInterval - elapsed)
+				select {
+				case <-ctx.Done():
+					timer.Stop()
+					return nil
+				case <-timer.C:
+				}
+				// Drain any additional events that piled up during the wait so
+				// the next iteration acts on a fresh state.
+				select {
+				case <-trigger:
+				default:
+				}
+			}
+			doSync()
+			lastSync = time.Now()
+		}
+	}
 }
 
 func syncExternalIPs(ctx context.Context, client kubernetes.Interface, lister listersv1.NodeLister, namespace, serviceName string, log *slog.Logger) error {
