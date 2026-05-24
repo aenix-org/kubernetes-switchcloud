@@ -195,6 +195,10 @@ spec:
     konnectivity:
       server:
         port: 8132
+        # Temporary diagnostic verbosity to see backend register/disconnect
+        # events and DIAL_REQ routing. Default level suppresses all INFO logs.
+        extraArgs:
+        - --v=4
       # Kamaji defaults --proxy-server-host to the in-cluster ClusterIP, which
       # is unreachable from workers running on Switch Cloud. Override it to the
       # cluster's public hostname; talos-edge-router exposes :8132 there.
