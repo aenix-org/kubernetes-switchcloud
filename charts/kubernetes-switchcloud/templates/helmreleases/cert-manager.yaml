@@ -32,6 +32,13 @@ spec:
   uninstall:
     timeout: 2m
   values:
+    # Cozystack's cozy-cert-manager chart defaults crds.enabled to false
+    # because the platform itself installs CRDs as a separate HR. For
+    # workload clusters there's no such separate CRD HR, so the cert-manager
+    # chart must bundle them — otherwise startupapicheck loops on missing
+    # CertificateRequest CRD and the controller can't function.
+    crds:
+      enabled: true
     {{- toYaml .Values.addons.certManager.valuesOverride | nindent 4 }}
   dependsOn:
   - name: {{ .Release.Name }}-cilium
