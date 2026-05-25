@@ -111,6 +111,10 @@ addons:
   fluxcd:
     enabled: false
     valuesOverride: {}
+  kilo:
+    ## @param addons.kilo.enabled Install Kilo WireGuard mesh in the tenant cluster. Required if the cluster should mesh with peers across locations or via the future kilo-clustermesh-operator. Defaults to false because not every tenant needs cross-location routing, and a dedicated mesh-leader node must be pinned with `cluster-autoscaler.kubernetes.io/scale-down-disabled=true` to avoid losing the gateway during a scale-down event.
+    enabled: false
+    valuesOverride: {}
   ## @section tenantApiserverProxy (per-node TLS SNI injector for kubernetes.default.svc ClusterIP)
   tenantApiserverProxy:
     enabled: true

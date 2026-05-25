@@ -1,0 +1,54 @@
+{{- if and .Values.addons.kilo.enabled .Values._namespace.etcd }}
+---
+apiVersion: source.toolkit.fluxcd.io/v1beta2
+kind: OCIRepository
+metadata:
+  name: {{ .Release.Name }}-kilo
+  namespace: {{ .Release.Namespace }}
+  labels:
+    cozystack.io/target-cluster-name: {{ .Release.Name }}
+spec:
+  interval: 5m
+  url: {{ index .Chart.Annotations "kilo/chart-url" }}
+  ref:
+    tag: {{ index .Chart.Annotations "kilo/chart-version" }}
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: {{ .Release.Name }}-kilo
+  labels:
+    cozystack.io/target-cluster-name: {{ .Release.Name }}
+    sharding.fluxcd.io/key: tenants
+spec:
+  releaseName: kilo
+  chartRef:
+    kind: OCIRepository
+    name: {{ .Release.Name }}-kilo
+    namespace: {{ .Release.Namespace }}
+  kubeConfig:
+    secretRef:
+      name: {{ .Release.Name }}-admin-kubeconfig
+      key: super-admin.svc
+  targetNamespace: kube-system
+  storageNamespace: kube-system
+  interval: 5m
+  timeout: 10m
+  install:
+    createNamespace: false
+    remediation:
+      retries: -1
+  upgrade:
+    force: true
+    remediation:
+      retries: -1
+  uninstall:
+    timeout: 2m
+  {{- with .Values.addons.kilo.valuesOverride }}
+  values:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  dependsOn:
+  - name: {{ .Release.Name }}-cilium
+    namespace: {{ .Release.Namespace }}
+{{- end }}
