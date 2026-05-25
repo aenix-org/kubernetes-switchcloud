@@ -47,7 +47,4 @@ spec:
     timeout: 2m
   values:
     apiServerOverride: {{ $apiServer }}
-    {{- with .Values.addons.providerIdSetter.valuesOverride }}
-    {{- toYaml . | nindent 4 }}
-    {{- end }}
 {{- end }}

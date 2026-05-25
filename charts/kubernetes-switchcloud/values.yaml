@@ -98,16 +98,18 @@ addons:
     enabled: true
     valuesOverride: {}
   ingressNginx:
+    ## @param addons.ingressNginx.enabled Enable Ingress-NGINX controller in the tenant cluster
     enabled: false
+    ## @param addons.ingressNginx.exposeMethod How the controller is reachable from outside. Allowed values: `LoadBalancer`, `Proxied`. `Proxied` is reserved for a future platform-side router and currently fails render in switchcloud (no per-tenant SNI routing for HTTP yet).
+    exposeMethod: LoadBalancer
+    ## @param addons.ingressNginx.hosts Domains served by this tenant ingress. Used for cert-manager SANs and to document the public routing target.
+    hosts: []
     valuesOverride: {}
   metricsServer:
     enabled: true
     valuesOverride: {}
   fluxcd:
     enabled: false
-    valuesOverride: {}
-  ## @section providerIdSetter (always enabled — required for CAPI node mapping)
-  providerIdSetter:
     valuesOverride: {}
   ## @section tenantApiserverProxy (per-node TLS SNI injector for kubernetes.default.svc ClusterIP)
   tenantApiserverProxy:
