@@ -49,12 +49,20 @@ configPatches:
       net.ipv4.tcp_keepalive_time: "60"
       net.ipv4.tcp_keepalive_intvl: "10"
       net.ipv4.tcp_keepalive_probes: "3"
+  # Embed cluster CA into Talos worker bootstrap config. Failing the whole
+  # render until the Kamaji-managed CA Secret exists is intentional: rendering
+  # without the patch and then again with it produces two different TCT spec
+  # hashes, which CAPI MachineDeployment treats as a template change and rolls
+  # the entire worker pool. Flux retries the HelmRelease every interval until
+  # KamajiControlPlane has populated the Secret, after which the TCT hash is
+  # stable for the lifetime of the cluster.
   {{- $kamajiCA := lookup "v1" "Secret" $.Release.Namespace (printf "%s-ca" $.Release.Name) }}
-  {{- if and $kamajiCA $kamajiCA.data (index $kamajiCA.data "tls.crt") }}
+  {{- if not (and $kamajiCA $kamajiCA.data (index $kamajiCA.data "tls.crt")) }}
+  {{-   fail (printf "Kamaji CA Secret %s-ca not yet populated; retry once KamajiControlPlane is Ready" $.Release.Name) }}
+  {{- end }}
   - op: replace
     path: /cluster/ca/crt
     value: {{ index $kamajiCA.data "tls.crt" }}
-  {{- end }}
 {{- end }}
 
 {{/*
