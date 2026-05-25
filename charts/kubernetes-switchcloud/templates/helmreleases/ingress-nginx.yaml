@@ -1,3 +1,19 @@
+{{- if .Values.addons.ingressNginx.enabled }}
+{{- $exposeMethod := .Values.addons.ingressNginx.exposeMethod | default "LoadBalancer" }}
+{{- if not (has $exposeMethod (list "LoadBalancer" "Proxied")) }}
+{{-   fail (printf "addons.ingressNginx.exposeMethod must be one of LoadBalancer|Proxied, got %q" $exposeMethod) }}
+{{- end }}
+{{- if eq $exposeMethod "Proxied" }}
+{{-   fail "addons.ingressNginx.exposeMethod=Proxied is not yet implemented in switchcloud (no platform-side HTTP router); use LoadBalancer for now" }}
+{{- end }}
+{{- end }}
+{{- define "cozystack.switchcloud.defaultIngressValues" -}}
+ingress-nginx:
+  fullnameOverride: ingress-nginx
+  controller:
+    kind: DaemonSet
+{{- end }}
+
 {{- if and .Values.addons.ingressNginx.enabled .Values._namespace.etcd }}
 apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
@@ -32,7 +48,7 @@ spec:
   uninstall:
     timeout: 2m
   values:
-    {{- toYaml .Values.addons.ingressNginx.valuesOverride | nindent 4 }}
+    {{- toYaml (deepCopy .Values.addons.ingressNginx.valuesOverride | mergeOverwrite (fromYaml (include "cozystack.switchcloud.defaultIngressValues" .))) | nindent 4 }}
   dependsOn:
   - name: {{ .Release.Name }}-cilium
     namespace: {{ .Release.Namespace }}
