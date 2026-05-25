@@ -1,0 +1,34 @@
+{{- if and .Values.addons.kilo.enabled .Values.addons.kilo.clusterMesh.remoteClusters .Values._namespace.etcd }}
+---
+apiVersion: kilo.squat.ai/v1alpha1
+kind: ClusterMesh
+metadata:
+  name: {{ .Release.Name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    cozystack.io/target-cluster-name: {{ .Release.Name }}
+spec:
+  clusters:
+    - name: {{ .Release.Name }}
+      kubeconfigSecretRef:
+        name: {{ .Release.Name }}-admin-kubeconfig
+        key: super-admin.conf
+      podCIDRs:
+        - {{ .Values.network.podCIDR }}
+      serviceCIDR: {{ .Values.network.serviceCIDR }}
+      wireguardCIDR: {{ required "addons.kilo.clusterMesh.localWireguardCIDR is required when clusterMesh.remoteClusters is non-empty" .Values.addons.kilo.clusterMesh.localWireguardCIDR | quote }}
+      wireguardPort: {{ .Values.addons.kilo.clusterMesh.wireguardPort | default 51820 }}
+    {{- range .Values.addons.kilo.clusterMesh.remoteClusters }}
+    - name: {{ .name }}
+      kubeconfigSecretRef:
+        name: {{ .kubeconfigSecretName }}
+        key: {{ .kubeconfigSecretKey | default "super-admin.conf" }}
+      podCIDRs:
+      {{- range .podCIDRs }}
+        - {{ . | quote }}
+      {{- end }}
+      serviceCIDR: {{ .serviceCIDR | quote }}
+      wireguardCIDR: {{ .wireguardCIDR | quote }}
+      wireguardPort: {{ .wireguardPort | default $.Values.addons.kilo.clusterMesh.wireguardPort | default 51820 }}
+    {{- end }}
+{{- end }}

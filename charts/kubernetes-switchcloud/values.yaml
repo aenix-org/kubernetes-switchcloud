@@ -126,9 +126,26 @@ addons:
     enabled: false
     valuesOverride: {}
   kilo:
-    ## @param addons.kilo.enabled Install Kilo WireGuard mesh in the tenant cluster. Required if the cluster should mesh with peers across locations or via the future kilo-clustermesh-operator. Defaults to false because not every tenant needs cross-location routing, and a dedicated mesh-leader node must be pinned with `cluster-autoscaler.kubernetes.io/scale-down-disabled=true` to avoid losing the gateway during a scale-down event.
+    ## @param addons.kilo.enabled Install Kilo WireGuard mesh in the tenant cluster. Required if the cluster should mesh with peers across locations or via the kilo-clustermesh-operator. Defaults to false because not every tenant needs cross-location routing, and a dedicated mesh-leader node must be pinned with `cluster-autoscaler.kubernetes.io/scale-down-disabled=true` to avoid losing the gateway during a scale-down event.
     enabled: false
     valuesOverride: {}
+    ## @section ClusterMesh registration
+    ## When clusterMesh.remoteClusters has at least one entry, the chart
+    ## emits a kilo.squat.ai/v1alpha1 ClusterMesh resource in the same
+    ## namespace as the tenant Kamaji secrets (`tenant-root`). The
+    ## kilo-clustermesh-operator running in the management cluster
+    ## reconciles it. The local cluster entry is auto-derived from this
+    ## release's name and the Kamaji-generated admin kubeconfig Secret
+    ## (`<release>-admin-kubeconfig`, key `super-admin.conf`). Remote
+    ## clusters are operator-supplied by Secret name so the same Secret
+    ## naming convention from sibling switchcloud tenants can be reused.
+    clusterMesh:
+      ## @param addons.kilo.clusterMesh.localWireguardCIDR WireGuard CIDR for the local cluster (must match kilo.transitCIDR override)
+      localWireguardCIDR: ""
+      ## @param addons.kilo.clusterMesh.wireguardPort UDP port for WireGuard peers
+      wireguardPort: 51820
+      ## @param addons.kilo.clusterMesh.remoteClusters Remote clusters to mesh with. Each entry: {name, kubeconfigSecretName, podCIDRs, serviceCIDR, wireguardCIDR}.
+      remoteClusters: []
   ## @section tenantApiserverProxy (per-node TLS SNI injector for kubernetes.default.svc ClusterIP)
   tenantApiserverProxy:
     enabled: true
