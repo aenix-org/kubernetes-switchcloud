@@ -30,12 +30,12 @@ spec:
     secretRef:
       name: {{ .Release.Name }}-admin-kubeconfig
       key: super-admin.svc
-  targetNamespace: kube-system
-  storageNamespace: kube-system
+  targetNamespace: cozy-kilo
+  storageNamespace: cozy-kilo
   interval: 5m
   timeout: 10m
   install:
-    createNamespace: false
+    createNamespace: true
     remediation:
       retries: -1
   upgrade:
