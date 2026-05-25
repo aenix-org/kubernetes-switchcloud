@@ -52,14 +52,18 @@ configPatches:
   # hashes, which CAPI MachineDeployment treats as a template change and rolls
   # the entire worker pool. Flux retries the HelmRelease every interval until
   # KamajiControlPlane has populated the Secret, after which the TCT hash is
-  # stable for the lifetime of the cluster.
+  # stable for the lifetime of the cluster. During `helm lint`/`helm template`
+  # there is no cluster to look the Secret up in, so the patch is simply omitted
+  # — `.Release.IsInstall` and `.Release.IsUpgrade` are only set for real Flux
+  # install/upgrade actions, which is exactly when the fail must trigger.
   {{- $kamajiCA := lookup "v1" "Secret" $.Release.Namespace (printf "%s-ca" $.Release.Name) }}
-  {{- if not (and $kamajiCA $kamajiCA.data (index $kamajiCA.data "tls.crt")) }}
-  {{-   fail (printf "Kamaji CA Secret %s-ca not yet populated; retry once KamajiControlPlane is Ready" $.Release.Name) }}
-  {{- end }}
+  {{- if and $kamajiCA $kamajiCA.data (index $kamajiCA.data "tls.crt") }}
   - op: replace
     path: /cluster/ca/crt
     value: {{ index $kamajiCA.data "tls.crt" }}
+  {{- else if or $.Release.IsInstall $.Release.IsUpgrade }}
+  {{-   fail (printf "Kamaji CA Secret %s-ca not yet populated; retry once KamajiControlPlane is Ready" $.Release.Name) }}
+  {{- end }}
 {{- end }}
 
 {{/*
