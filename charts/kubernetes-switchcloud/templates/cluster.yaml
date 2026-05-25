@@ -321,12 +321,20 @@ Compute kubelet reservations:
 {{- $_ := set $context "kubeReservedCpu" $kubeReservedCpu }}
 {{- $_ := set $context "evictionHardMemory" $evictionHardMemory }}
 {{- $_ := set $context "evictionSoftMemory" $evictionSoftMemory }}
+{{/*
+Hash on the canonical YAML (parse + re-serialize) rather than on the raw
+template output. Raw output includes YAML comments and is sensitive to
+whitespace and key ordering, none of which affect the spec that CAPI
+actually stores. Hashing the raw fragment makes editing a comment look
+like a spec change to MachineDeployment and triggers a full worker pool
+roll, which is what `# Embed cluster CA ...` did when first introduced.
+*/}}
 {{- $talosConfigFields := include "talosconfigtemplate" $context }}
-{{- $talosConfigHash := $talosConfigFields | sha256sum | trunc 6 }}
+{{- $talosConfigHash := $talosConfigFields | fromYaml | toYaml | sha256sum | trunc 6 }}
 {{- $talosConfigName := printf "%s-%s-%s" $.Release.Name $groupName $talosConfigHash }}
 {{- $talosConfigTemplateNames = append $talosConfigTemplateNames $talosConfigName }}
 {{- $templateFields := include "openstackmachinetemplate" $context }}
-{{- $templateHash := $templateFields | sha256sum | trunc 6 }}
+{{- $templateHash := $templateFields | fromYaml | toYaml | sha256sum | trunc 6 }}
 {{- $templateName := printf "%s-%s-%s" $.Release.Name $groupName $templateHash }}
 {{- $openstackMachineTemplateNames = append $openstackMachineTemplateNames $templateName }}
 ---
