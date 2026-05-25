@@ -39,7 +39,9 @@ spec:
     # CertificateRequest CRD and the controller can't function.
     crds:
       enabled: true
-    {{- toYaml .Values.addons.certManager.valuesOverride | nindent 4 }}
+    {{- with .Values.addons.certManager.valuesOverride }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
   dependsOn:
   - name: {{ .Release.Name }}-cilium
     namespace: {{ .Release.Namespace }}
