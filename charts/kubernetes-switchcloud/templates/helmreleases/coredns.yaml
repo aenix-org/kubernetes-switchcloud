@@ -1,7 +1,7 @@
 {{- define "kubernetes-switchcloud.defaultCoreDNSValues" -}}
 coredns:
   service:
-    clusterIP: "10.95.0.10"
+    clusterIP: {{ .Values.network.dnsClusterIP | quote }}
 {{- end }}
 
 {{- if and .Values.addons.coredns.enabled .Values._namespace.etcd }}
