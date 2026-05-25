@@ -38,9 +38,16 @@ spec:
   timeout: 5m
   install:
     createNamespace: false
+    # The DaemonSet only schedules onto worker nodes, which CAPI provisions
+    # asynchronously, and its DNAT init container needs the workload cluster
+    # to be reachable. Waiting for Pods to be Ready stalls the umbrella
+    # install for the full timeout; the DaemonSet rolls forward as soon as
+    # a worker joins.
+    disableWait: true
     remediation:
       retries: -1
   upgrade:
+    disableWait: true
     remediation:
       retries: -1
   uninstall:

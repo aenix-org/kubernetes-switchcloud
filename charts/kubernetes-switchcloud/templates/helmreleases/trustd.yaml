@@ -33,9 +33,18 @@ spec:
   interval: 5m
   timeout: 5m
   install:
+    # The Deployment mounts Talos bundle + workload kubeconfig Secrets,
+    # which CABPT/Kamaji create asynchronously. If Helm waits for the
+    # Pod to become Ready, install times out (5m) while volume mount
+    # waits on the not-yet-existing Secret. Skip the wait — the Pod
+    # rolls forward on its own once the Secret appears, and the VM
+    # boot retries trustd indefinitely so there's no need to block the
+    # rest of the umbrella chart install on this.
+    disableWait: true
     remediation:
       retries: -1
   upgrade:
+    disableWait: true
     remediation:
       retries: -1
   values:
