@@ -57,6 +57,20 @@ controlPlane:
 ## When empty the chart uses the default <release>.<namespace>.svc:6443
 host: ""
 
+## @section Cluster network CIDRs
+## Pod, service and CoreDNS CIDRs that the tenant cluster bootstraps with.
+## These map onto CAPI Cluster.spec.clusterNetwork.{pods,services}.cidrBlocks
+## and onto the CoreDNS Service clusterIP. They are immutable after the
+## cluster is created (CAPI rejects clusterNetwork updates), so set them at
+## install time. The dnsClusterIP must fall inside serviceCIDR.
+network:
+  ## @param network.podCIDR CIDR allocated for pods (CAPI Cluster.spec.clusterNetwork.pods)
+  podCIDR: "10.243.0.0/16"
+  ## @param network.serviceCIDR CIDR allocated for Services (CAPI Cluster.spec.clusterNetwork.services)
+  serviceCIDR: "10.95.0.0/16"
+  ## @param network.dnsClusterIP ClusterIP for the CoreDNS Service (must be inside serviceCIDR)
+  dnsClusterIP: "10.95.0.10"
+
 ## @section Node groups
 ## @param nodeGroups Worker node group definitions
 nodeGroups:

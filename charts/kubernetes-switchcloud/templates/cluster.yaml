@@ -160,10 +160,10 @@ spec:
   clusterNetwork:
     pods:
       cidrBlocks:
-      - 10.243.0.0/16
+      - {{ .Values.network.podCIDR }}
     services:
       cidrBlocks:
-      - 10.95.0.0/16
+      - {{ .Values.network.serviceCIDR }}
   controlPlaneRef:
     namespace: {{ .Release.Namespace }}
     apiVersion: controlplane.cluster.x-k8s.io/v1alpha1
