@@ -46,23 +46,21 @@ configPatches:
       net.ipv4.tcp_keepalive_time: "60"
       net.ipv4.tcp_keepalive_intvl: "10"
       net.ipv4.tcp_keepalive_probes: "3"
-  # Embed cluster CA into Talos worker bootstrap config. Failing the whole
-  # render until the Kamaji-managed CA Secret exists is intentional: rendering
-  # without the patch and then again with it produces two different TCT spec
-  # hashes, which CAPI MachineDeployment treats as a template change and rolls
-  # the entire worker pool. Flux retries the HelmRelease every interval until
-  # KamajiControlPlane has populated the Secret, after which the TCT hash is
-  # stable for the lifetime of the cluster. During `helm lint`/`helm template`
-  # there is no cluster to look the Secret up in, so the patch is simply omitted
-  # — `.Release.IsInstall` and `.Release.IsUpgrade` are only set for real Flux
-  # install/upgrade actions, which is exactly when the fail must trigger.
+  # Embed cluster CA into Talos worker bootstrap config when the Kamaji-
+  # managed Secret already exists. On the very first render the Secret
+  # does not exist yet (KamajiControlPlane is part of this same chart and
+  # needs to create itself first), so the patch is silently omitted. The
+  # next reconcile finds the Secret, adds the patch, and the TCT spec
+  # hash changes once — CAPI rolls the worker pool to pick it up. That
+  # one-time roll happens minutes after bootstrap when nothing is yet
+  # scheduled on the workers, so it is acceptable. Failing render until
+  # the Secret appears deadlocks because the Secret is produced by a
+  # resource this same render is responsible for creating.
   {{- $kamajiCA := lookup "v1" "Secret" $.Release.Namespace (printf "%s-ca" $.Release.Name) }}
   {{- if and $kamajiCA $kamajiCA.data (index $kamajiCA.data "tls.crt") }}
   - op: replace
     path: /cluster/ca/crt
     value: {{ index $kamajiCA.data "tls.crt" }}
-  {{- else if or $.Release.IsInstall $.Release.IsUpgrade }}
-  {{-   fail (printf "Kamaji CA Secret %s-ca not yet populated; retry once KamajiControlPlane is Ready" $.Release.Name) }}
   {{- end }}
 {{- end }}
 
