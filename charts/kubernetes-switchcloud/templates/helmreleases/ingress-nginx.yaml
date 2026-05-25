@@ -52,4 +52,6 @@ spec:
   dependsOn:
   - name: {{ .Release.Name }}-cilium
     namespace: {{ .Release.Namespace }}
+  - name: {{ .Release.Name }}-cert-manager-crds
+    namespace: {{ .Release.Namespace }}
 {{- end }}
