@@ -20,7 +20,7 @@ kilo:
   nodeAnnotator:
     enabled: false
     port: 51820
-    image: rancher/kubectl:v1.32.6
+    image: rancher/kubectl:v1.32.6@sha256:f9fb4407514339029653e3a1e878243c0786946c634c21ef7221b0f69a17726c
   cleanUpInterface: false
   mtu: auto
   # Cilium is the CNI in switchcloud tenant clusters; Kilo must run in

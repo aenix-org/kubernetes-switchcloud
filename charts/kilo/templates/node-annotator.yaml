@@ -29,12 +29,13 @@ roleRef:
   name: kilo-node-annotator
 ---
 # DaemonSet that sets kilo.squat.ai/force-endpoint=<InternalIP>:<port> on
-# the node it runs on. Required for kilo-clustermesh-operator to issue
-# WireGuard peer endpoints in environments without a NodeExternalIP
-# (OpenStack tenants without floating IPs is the canonical case).
-# The pod exits 0 after patching; restartPolicy=Always re-runs it if the
-# internal IP changes (e.g., NIC reassignment), so the annotation is
-# always in sync with status.hostIP.
+# every node, looped every 60s so the annotation tracks status.hostIP
+# across NIC reassignments. Required for kilo-clustermesh-operator to
+# issue WireGuard peer endpoints in environments without a
+# NodeExternalIP (OpenStack tenants without floating IPs is the
+# canonical case). Runs on the pod network (no hostNetwork) and as a
+# non-root user; the only privilege it needs is the namespaced RBAC
+# below to patch Nodes.
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:
@@ -53,9 +54,14 @@ spec:
         app.kubernetes.io/name: kilo-node-annotator
     spec:
       serviceAccountName: kilo-node-annotator
-      hostNetwork: true
       tolerations:
         - operator: Exists
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: annotator
           image: {{ .Values.kilo.nodeAnnotator.image | quote }}
@@ -70,15 +76,19 @@ spec:
                   fieldPath: status.hostIP
             - name: PORT
               value: {{ .Values.kilo.nodeAnnotator.port | quote }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
           command:
             - /bin/sh
             - -c
             - |
-              set -e
-              # Resync every 60s so the annotation tracks status.hostIP changes
-              # (NIC swap, OpenStack network reattach) without restarting the pod.
+              # Resync every 60s. '|| true' keeps the pod alive across
+              # transient apiserver hiccups; next iteration retries.
               while true; do
-                kubectl annotate node "$NODE_NAME" "kilo.squat.ai/force-endpoint=${NODE_IP}:${PORT}" --overwrite
+                kubectl annotate node "$NODE_NAME" "kilo.squat.ai/force-endpoint=${NODE_IP}:${PORT}" --overwrite || true
                 sleep 60
               done
           resources:
