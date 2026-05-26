@@ -11,6 +11,16 @@ kilo:
   # mesh peers live in the same OpenStack network but different pod CIDRs.
   # Set to 'always' for cluster-mesh deployments.
   encapsulate: crosssubnet
+  # When the tenant has no NodeExternalIP (typical for OpenStack tenants
+  # without floating IPs), kilo-clustermesh-operator cannot derive a
+  # WireGuard endpoint and skips the node with NodeNoEndpoint. Run a
+  # tiny privileged DaemonSet that patches each node with
+  # kilo.squat.ai/force-endpoint=<status.hostIP>:<wireguardPort> so both
+  # the operator and Kilo itself pick the right peer endpoint.
+  nodeAnnotator:
+    enabled: false
+    port: 51820
+    image: rancher/kubectl:v1.32.6
   cleanUpInterface: false
   mtu: auto
   # Cilium is the CNI in switchcloud tenant clusters; Kilo must run in
