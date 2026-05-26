@@ -5,6 +5,12 @@ kilo:
     repository: ghcr.io/cozystack/cozystack/kilo
   transitCIDR: 100.66.0.0/16
   meshGranularity: location
+  # Kilo encapsulate mode: 'never' | 'crosssubnet' | 'always'.
+  # crosssubnet (default) skips the WG tunnel when peers are in the same
+  # underlay subnet, which breaks cross-cluster pod routing when the
+  # mesh peers live in the same OpenStack network but different pod CIDRs.
+  # Set to 'always' for cluster-mesh deployments.
+  encapsulate: crosssubnet
   cleanUpInterface: false
   mtu: auto
   # Cilium is the CNI in switchcloud tenant clusters; Kilo must run in
