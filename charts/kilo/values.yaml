@@ -20,7 +20,10 @@ kilo:
   nodeAnnotator:
     enabled: false
     port: 51820
-    image: rancher/kubectl:v1.32.6@sha256:f9fb4407514339029653e3a1e878243c0786946c634c21ef7221b0f69a17726c
+    # alpine/k8s ships kubectl plus a busybox /bin/sh — the rancher/kubectl
+    # image is distroless and does not have a shell, which makes the
+    # annotation loop "exec: /bin/sh: no such file or directory".
+    image: alpine/k8s:1.32.6@sha256:b965c518d72d817e3c9eee24a357bd68b005ce7bd3504eb8f2b1b3dc839a1624
   cleanUpInterface: false
   mtu: auto
   # Cilium is the CNI in switchcloud tenant clusters; Kilo must run in
