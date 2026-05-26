@@ -48,14 +48,13 @@ spec:
   # deep-merge operator-supplied valuesOverride on top. Doing this in a
   # single toYaml pass avoids emitting two top-level `kilo:` keys in the
   # HR values block (helm-controller's YAML parser would keep only the
-  # last and silently drop the mesh wiring).
+  # last and silently drop the mesh wiring). The kilo-clustermesh-operator
+  # now annotates remote-cluster nodes with kilo.squat.ai/force-endpoint
+  # through the kubeconfig it already holds, so the chart only needs to
+  # flip Kilo's --encapsulate flag locally.
   {{- $defaults := dict }}
   {{- if .Values.addons.kilo.clusterMesh.remoteClusters }}
-  {{- $_ := set $defaults "kilo" (dict
-        "nodeAnnotator" (dict
-          "enabled" true
-          "port" (.Values.addons.kilo.clusterMesh.wireguardPort | default 51820))
-        "encapsulate" "always") }}
+  {{- $_ := set $defaults "kilo" (dict "encapsulate" "always") }}
   {{- end }}
   values:
     {{- toYaml (mergeOverwrite (deepCopy $defaults) (.Values.addons.kilo.valuesOverride | default dict)) | nindent 4 }}
