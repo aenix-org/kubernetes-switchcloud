@@ -1,4 +1,21 @@
 {{- if and .Values.addons.kilo.enabled .Values.addons.kilo.clusterMesh.remoteClusters .Values._namespace.etcd }}
+{{- /*
+  A ClusterMesh is symmetric: every participating KubernetesSwitchcloud CR
+  lists its peers in addons.kilo.clusterMesh.remoteClusters, so the Kilo
+  daemonset on each side gets the correct WireGuard wiring (encapsulate,
+  nodeAnnotator) via the umbrella helmreleases/kilo.yaml template. But
+  there must be exactly ONE ClusterMesh resource in the shared namespace,
+  otherwise kilo-clustermesh-operator's CIDR validator flags overlapping
+  meshes. Pick a deterministic owner: the cluster whose Release.Name sorts
+  first among {self + all remoteClusters[*].name} is the only one that
+  emits the CR. Every other peer is silent here.
+*/}}
+{{- $names := list .Release.Name }}
+{{- range .Values.addons.kilo.clusterMesh.remoteClusters }}
+{{-   $names = append $names .name }}
+{{- end }}
+{{- $owner := index (sortAlpha $names) 0 }}
+{{- if eq $owner .Release.Name }}
 ---
 apiVersion: kilo.squat.ai/v1alpha1
 kind: ClusterMesh
@@ -31,4 +48,5 @@ spec:
       wireguardCIDR: {{ .wireguardCIDR | quote }}
       wireguardPort: {{ .wireguardPort | default $.Values.addons.kilo.clusterMesh.wireguardPort | default 51820 }}
     {{- end }}
+{{- end }}
 {{- end }}
