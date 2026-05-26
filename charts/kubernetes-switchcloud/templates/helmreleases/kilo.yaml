@@ -44,10 +44,21 @@ spec:
       retries: -1
   uninstall:
     timeout: 2m
-  {{- with .Values.addons.kilo.valuesOverride }}
-  values:
-    {{- toYaml . | nindent 4 }}
+  # Build defaults the chart enforces when ClusterMesh is wired up, then
+  # deep-merge operator-supplied valuesOverride on top. Doing this in a
+  # single toYaml pass avoids emitting two top-level `kilo:` keys in the
+  # HR values block (helm-controller's YAML parser would keep only the
+  # last and silently drop the mesh wiring).
+  {{- $defaults := dict }}
+  {{- if .Values.addons.kilo.clusterMesh.remoteClusters }}
+  {{- $_ := set $defaults "kilo" (dict
+        "nodeAnnotator" (dict
+          "enabled" true
+          "port" (.Values.addons.kilo.clusterMesh.wireguardPort | default 51820))
+        "encapsulate" "always") }}
   {{- end }}
+  values:
+    {{- toYaml (mergeOverwrite (deepCopy $defaults) (.Values.addons.kilo.valuesOverride | default dict)) | nindent 4 }}
   dependsOn:
   - name: {{ .Release.Name }}-cilium
     namespace: {{ .Release.Namespace }}
