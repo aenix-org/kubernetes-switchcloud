@@ -145,6 +145,18 @@ func syncExternalIPs(ctx context.Context, client kubernetes.Interface, lister li
 		return fmt.Errorf("get service: %w", err)
 	}
 
+	// LoadBalancer Services have their public IPs managed by an external LB
+	// controller (MetalLB, a cloud LB). Writing to spec.externalIPs from here
+	// would fight that controller, churn the Service every reconcile, and on
+	// MetalLB IP-sharing setups would silently break the shared-IP guard.
+	// The operator opts into this mode by setting service.type=LoadBalancer
+	// in the chart values.
+	if svc.Spec.Type == corev1.ServiceTypeLoadBalancer {
+		log.Debug("service is LoadBalancer, skipping externalIPs sync",
+			"service", serviceName, "lb-ingress", svc.Status.LoadBalancer.Ingress)
+		return nil
+	}
+
 	current := make([]string, len(svc.Spec.ExternalIPs))
 	copy(current, svc.Spec.ExternalIPs)
 	sort.Strings(current)

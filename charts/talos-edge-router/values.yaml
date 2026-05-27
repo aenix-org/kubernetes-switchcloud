@@ -3,6 +3,35 @@ image:
   tag: ""  # defaults to .Chart.AppVersion
   pullPolicy: IfNotPresent
 
+# service controls how the talos-edge-router Service is exposed.
+#
+#   type: ClusterIP    (default) — Service stays ClusterIP and the router's
+#                                  ipsync controller populates spec.externalIPs
+#                                  from Node InternalIP / extra-ips annotations.
+#                                  Use this when nodes themselves carry the
+#                                  public IPs the operator wants to advertise.
+#
+#   type: LoadBalancer            — render a LoadBalancer Service. Useful when
+#                                  a downstream LB controller (MetalLB, cloud
+#                                  LB) is responsible for allocating / sharing
+#                                  the public IP. In this mode the in-process
+#                                  ipsync controller leaves spec.externalIPs
+#                                  alone (it would fight the LB controller
+#                                  otherwise).
+#
+# loadBalancerIP and annotations are forwarded verbatim, so MetalLB IP-sharing
+# is configured the standard way:
+#
+#   service:
+#     type: LoadBalancer
+#     loadBalancerIP: "23.111.0.123"
+#     annotations:
+#       metallb.universe.tf/allow-shared-ip: "talos-shared"
+service:
+  type: ClusterIP
+  loadBalancerIP: ""
+  annotations: {}
+
 # listeners defines the TCP listeners the router opens. Each listener gets its
 # own SNI routing table populated from Services that carry `label`.
 #
