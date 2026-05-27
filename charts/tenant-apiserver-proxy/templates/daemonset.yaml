@@ -29,13 +29,24 @@ spec:
       # The proxy must come up before the rest of the cluster can talk to
       # kubernetes.default.svc, so we run on every node including
       # not-ready/uninitialised ones.
-      containers:
-      - name: dnat
+      #
+      # iptables setup lives in an init container instead of a long-lived
+      # sidecar: the DNAT rule is kernel state that survives once
+      # installed, so there is nothing for a sidecar to do after the
+      # initial setup. Running it once at pod start and exiting keeps
+      # NET_ADMIN scoped to the boot phase, drops the `sleep infinity`
+      # busy-wait, and lets the main proxy container stay unprivileged.
+      initContainers:
+      - name: install-dnat
         image: registry.k8s.io/build-image/debian-iptables:bookworm-v1.0.0
         securityContext:
-          privileged: true
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
           capabilities:
-            add: ["NET_ADMIN"]
+            drop: [ALL]
+            add: [NET_ADMIN]
+          seccompProfile:
+            type: RuntimeDefault
         command:
         - sh
         - -c
@@ -52,7 +63,7 @@ spec:
           iptables-nft -t nat -C OUTPUT -j $CHAIN 2>/dev/null || iptables-nft -t nat -I OUTPUT 1 -j $CHAIN
           iptables-nft -t nat -C PREROUTING -j $CHAIN 2>/dev/null || iptables-nft -t nat -I PREROUTING 1 -j $CHAIN
           echo "DNAT installed for {{ .Values.kubernetesServiceIP }}:{{ .Values.kubernetesServicePort }} -> 127.0.0.1:{{ .Values.proxyPort }}"
-          sleep infinity
+      containers:
       - name: proxy
         image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
         imagePullPolicy: {{ .Values.image.pullPolicy }}
