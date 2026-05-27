@@ -45,6 +45,8 @@ spec:
           capabilities:
             drop: [ALL]
             add: [NET_ADMIN]
+          seccompProfile:
+            type: RuntimeDefault
         command:
         - sh
         - -c
