@@ -28,6 +28,17 @@ spec:
     path: /
   variants:
   - name: default
+    # Prerequisite Packages that cozystack-engine must reconcile before this
+    # one. They install CAPI core, the Kamaji control-plane provider, the
+    # Kamaji operator itself, and (via capi-operator's targetNamespace) the
+    # cozy-cluster-api namespace this chart's child HelmReleases land in.
+    # Without these, the platform Helm install fails with
+    # `namespaces "cozy-cluster-api" not found`.
+    dependsOn:
+    - cozystack.capi-operator
+    - cozystack.capi-provider-core
+    - cozystack.capi-provider-cp-kamaji
+    - cozystack.kamaji
     components:
     - name: kubernetes-switchcloud-platform
       path: core/platform
