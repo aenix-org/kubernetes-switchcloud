@@ -203,3 +203,29 @@ jobs:
           for tgz in _dist/*.tgz; do
             helm push "$tgz" oci://ghcr.io/aenix-org
           done
+
+      # Build a Cozystack-package bundle OCI artifact from packages/.
+      # This shape lets cozystack-engine auto-create the ArtifactGenerator
+      # from the PackageSource (init.yaml) and unblocks installation via
+      # Package -> HelmRelease.
+      - name: Install flux CLI
+        uses: fluxcd/flux2/action@main
+
+      - name: Compute bundle tag
+        id: bundletag
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            ver="${GITHUB_REF#refs/tags/v}"
+          else
+            ver=$(awk '/^version:/ {gsub(/"/, "", $2); print $2}' packages/core/platform/Chart.yaml)
+            ver="${ver}-sha-${GITHUB_SHA::8}"
+          fi
+          echo "value=$ver" >> "$GITHUB_OUTPUT"
+
+      - name: Push Cozystack package bundle
+        run: |
+          flux push artifact \
+            "oci://ghcr.io/aenix-org/kubernetes-switchcloud-platform-packages:${{ steps.bundletag.outputs.value }}" \
+            --path=packages \
+            --source="${{ github.server_url }}/${{ github.repository }}" \
+            --revision="${{ steps.bundletag.outputs.value }}@sha1:${{ github.sha }}"
