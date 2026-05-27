@@ -60,17 +60,19 @@ spec:
                 # gone — exiting the wait loop too early and leaving
                 # half-uninstalled HRs to be force-finalized. Treat a
                 # failed query as "still pending" so the loop retries.
-                listing=$(kubectl -n "$NS" get hr -l "$SEL" --no-headers 2>/dev/null)
-                if [ $? -ne 0 ]; then
+                if ! listing=$(kubectl -n "$NS" get hr -l "$SEL" --no-headers 2>/dev/null); then
                   echo "  list failed, retrying"
                   sleep 10
                   continue
                 fi
-                remaining=$(echo "$listing" | grep -c -v '^$' || true)
-                if [ "$remaining" = "0" ]; then
+                # Empty stdout means no HelmReleases match the selector.
+                # Counting with `[ -z ]` avoids the grep-with-||-true
+                # gymnastics that previously masked grep's exit=1.
+                if [ -z "$listing" ]; then
                   echo "  all HelmReleases uninstalled cleanly"
                   break
                 fi
+                remaining=$(printf '%s\n' "$listing" | wc -l | tr -d ' ')
                 echo "  still pending: $remaining"
                 sleep 10
               done

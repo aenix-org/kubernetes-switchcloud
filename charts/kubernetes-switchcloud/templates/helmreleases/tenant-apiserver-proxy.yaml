@@ -16,12 +16,16 @@ cainjector / coredns / metrics-server / cert-manager-webhook fail
 readiness probes and crashloop. Derive the correct first-IP from
 .Values.network.serviceCIDR and pass it through so any shape works.
 */}}
-{{- /* default fallback covers partial-overrides that omit network.serviceCIDR
-       — regexReplaceAll panics on a nil argument, which would brick the
-       whole render. The 10.95.0.0/16 default matches the upstream proxy
-       chart's hardcoded kubernetesServiceIP "10.95.0.1", preserving the
-       pre-PR-98 behaviour for any caller that doesn't set serviceCIDR. */}}
-{{- $svcCIDR := .Values.network.serviceCIDR | default "10.95.0.0/16" }}
+{{- /* Defensive walk: `.Values.network` can be nil if a caller passes a
+       partial override that omits the whole `network` block, and
+       `.Values.network.serviceCIDR` would then panic on a nil-pointer
+       dereference. `dig` would be the natural fit but Helm passes
+       `.Values` as `common.Values`, not a plain `map[string]interface{}`,
+       so dig refuses. Chaining `default (dict)` produces the same safe
+       walk: missing `network` → empty dict → missing `serviceCIDR` →
+       hardcoded 10.95.0.0/16 fallback (matches the upstream proxy
+       chart's default kubernetesServiceIP for the pre-PR-98 shape). */}}
+{{- $svcCIDR := (.Values.network | default (dict)).serviceCIDR | default "10.95.0.0/16" }}
 {{- $svcBase := regexReplaceAll "/.*$" $svcCIDR "" }}
 {{- $svcOctets := splitList "." $svcBase }}
 {{- $kubeSvcIP := printf "%s.%s.%s.1" (index $svcOctets 0) (index $svcOctets 1) (index $svcOctets 2) }}
