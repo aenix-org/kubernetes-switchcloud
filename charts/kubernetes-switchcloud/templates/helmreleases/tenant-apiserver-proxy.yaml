@@ -16,7 +16,13 @@ cainjector / coredns / metrics-server / cert-manager-webhook fail
 readiness probes and crashloop. Derive the correct first-IP from
 .Values.network.serviceCIDR and pass it through so any shape works.
 */}}
-{{- $svcBase := regexReplaceAll "/.*$" .Values.network.serviceCIDR "" }}
+{{- /* default fallback covers partial-overrides that omit network.serviceCIDR
+       — regexReplaceAll panics on a nil argument, which would brick the
+       whole render. The 10.95.0.0/16 default matches the upstream proxy
+       chart's hardcoded kubernetesServiceIP "10.95.0.1", preserving the
+       pre-PR-98 behaviour for any caller that doesn't set serviceCIDR. */}}
+{{- $svcCIDR := .Values.network.serviceCIDR | default "10.95.0.0/16" }}
+{{- $svcBase := regexReplaceAll "/.*$" $svcCIDR "" }}
 {{- $svcOctets := splitList "." $svcBase }}
 {{- $kubeSvcIP := printf "%s.%s.%s.1" (index $svcOctets 0) (index $svcOctets 1) (index $svcOctets 2) }}
 ---
