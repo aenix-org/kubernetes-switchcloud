@@ -29,17 +29,58 @@ spec:
             - -c
             - |
               set -e
+              SEL="cozystack.io/target-cluster-name={{ .Release.Name }}"
+              NS={{ .Release.Namespace }}
+
+              # Step 1: kick off child HelmRelease deletions while the
+              # tenant kube-apiserver is still reachable. --wait=false is
+              # fine here because we manage the wait window ourselves.
               echo "Step 1: Deleting HelmReleases targeting cluster {{ .Release.Name }}"
-              kubectl -n {{ .Release.Namespace }} delete helmreleases.helm.toolkit.fluxcd.io \
-                -l "cozystack.io/target-cluster-name={{ .Release.Name }}" \
+              kubectl -n "$NS" delete helmreleases.helm.toolkit.fluxcd.io \
+                -l "$SEL" --ignore-not-found=true --wait=false
+
+              # Step 2: wait for helm-controller to finish 'helm uninstall'
+              # inside the tenant. On success the HR releases its finalizer
+              # and disappears. If we hit the grace deadline, force-clear
+              # the Flux finalizer so Step 3 (Kamaji teardown) does not
+              # strand any HR with an unreachable kubeConfig — production
+              # symptom:
+              #   Get https://<tenant>.<ns>.svc:6443/version: no such host
+              # which happened when Kamaji was torn down before the child
+              # HR uninstalls could even talk to the tenant apiserver, and
+              # the Flux finalizer never released.
+              GRACE=180
+              echo "Step 2: waiting up to ${GRACE}s for HelmRelease uninstall"
+              deadline=$(( $(date +%s) + GRACE ))
+              while [ $(date +%s) -lt $deadline ]; do
+                remaining=$(kubectl -n "$NS" get hr -l "$SEL" --no-headers 2>/dev/null | wc -l)
+                if [ "$remaining" = "0" ]; then
+                  echo "  all HelmReleases uninstalled cleanly"
+                  break
+                fi
+                echo "  still pending: $remaining"
+                sleep 10
+              done
+
+              # Force-clear the Flux finalizer on whatever did not finish
+              # in time. This intentionally orphans Helm-managed resources
+              # inside the tenant — Kamaji teardown is about to remove the
+              # whole tenant anyway, so those resources die with it. The
+              # alternative (leaving the finalizer in place) wedges the HR
+              # forever and blocks the parent release teardown.
+              echo "  force-clearing Flux finalizers on remaining HelmReleases"
+              for hr in $(kubectl -n "$NS" get hr -l "$SEL" --no-headers -o custom-columns=NAME:.metadata.name 2>/dev/null); do
+                echo "    patching $hr"
+                kubectl -n "$NS" patch hr "$hr" --type=merge \
+                  -p '{"metadata":{"finalizers":[]}}' || true
+              done
+
+              echo "Step 3: Deleting KamajiControlPlane {{ .Release.Name }}"
+              kubectl -n "$NS" delete kamajicontrolplanes.controlplane.cluster.x-k8s.io {{ .Release.Name }} \
                 --ignore-not-found=true --wait=false
 
-              echo "Step 2: Deleting KamajiControlPlane {{ .Release.Name }}"
-              kubectl -n {{ .Release.Namespace }} delete kamajicontrolplanes.controlplane.cluster.x-k8s.io {{ .Release.Name }} \
-                --ignore-not-found=true --wait=false
-
-              echo "Step 3: Deleting TenantControlPlane {{ .Release.Name }}"
-              kubectl -n {{ .Release.Namespace }} delete tenantcontrolplanes.kamaji.clastix.io {{ .Release.Name }} \
+              echo "Step 4: Deleting TenantControlPlane {{ .Release.Name }}"
+              kubectl -n "$NS" delete tenantcontrolplanes.kamaji.clastix.io {{ .Release.Name }} \
                 --ignore-not-found=true --wait=false
 
               echo "Cleanup completed successfully"
