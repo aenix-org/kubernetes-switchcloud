@@ -53,11 +53,26 @@ spec:
               echo "Step 2: waiting up to ${GRACE}s for HelmRelease uninstall"
               deadline=$(( $(date +%s) + GRACE ))
               while [ $(date +%s) -lt $deadline ]; do
-                remaining=$(kubectl -n "$NS" get hr -l "$SEL" --no-headers 2>/dev/null | wc -l)
-                if [ "$remaining" = "0" ]; then
+                # Capture kubectl output AND exit status separately. A
+                # transient apiserver hiccup (rate-limit, network blip)
+                # would otherwise print nothing to stdout, `wc -l` returns
+                # 0, and the script falsely concludes that every HR is
+                # gone — exiting the wait loop too early and leaving
+                # half-uninstalled HRs to be force-finalized. Treat a
+                # failed query as "still pending" so the loop retries.
+                if ! listing=$(kubectl -n "$NS" get hr -l "$SEL" --no-headers 2>/dev/null); then
+                  echo "  list failed, retrying"
+                  sleep 10
+                  continue
+                fi
+                # Empty stdout means no HelmReleases match the selector.
+                # Counting with `[ -z ]` avoids the grep-with-||-true
+                # gymnastics that previously masked grep's exit=1.
+                if [ -z "$listing" ]; then
                   echo "  all HelmReleases uninstalled cleanly"
                   break
                 fi
+                remaining=$(printf '%s\n' "$listing" | wc -l | tr -d ' ')
                 echo "  still pending: $remaining"
                 sleep 10
               done
