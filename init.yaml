@@ -8,7 +8,12 @@ spec:
   interval: 5m
   url: oci://ghcr.io/aenix-org/kubernetes-switchcloud-platform-packages
   ref:
-    semver: ">=0.0.0"
+    # Match pre-release tags too (e.g. "0.0.8-sha-<short>"): per semver,
+    # constraints without a pre-release suffix do not include pre-release
+    # versions, so ">=0.0.0" alone leaves the OCIRepository stuck on
+    # "no match found" until a stable tag is cut. Including "-0" widens
+    # the constraint to all valid semver versions.
+    semver: ">=0.0.0-0"
 ---
 apiVersion: cozystack.io/v1alpha1
 kind: PackageSource
