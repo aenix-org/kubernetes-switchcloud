@@ -78,16 +78,39 @@ spec:
               done
 
               # Force-clear the Flux finalizer on whatever did not finish
-              # in time. This intentionally orphans Helm-managed resources
-              # inside the tenant — Kamaji teardown is about to remove the
-              # whole tenant anyway, so those resources die with it. The
-              # alternative (leaving the finalizer in place) wedges the HR
-              # forever and blocks the parent release teardown.
+              # in time. Tenant-cluster-resident resources die with the
+              # tenant when Kamaji is torn down, but child HelmReleases
+              # whose target is THIS host cluster (e.g. trustd-csr-signer
+              # in tenant-root) leak: their Deployments, Services,
+              # ConfigMaps, RBAC, and SAs have no owner reference back to
+              # the HR object, and kubernetes garbage collection never
+              # touches them. They sit as zombies until manually removed.
+              #
+              # After force-clearing the HR finalizer, walk every Helm
+              # release the controller left behind and explicitly delete
+              # everything labelled by Flux as belonging to it. The labels
+              # `helm.toolkit.fluxcd.io/name` and `helm.toolkit.fluxcd.io/namespace`
+              # are stamped on every rendered resource by helm-controller
+              # regardless of the target namespace, so this works for
+              # both host-side and tenant-side HRs.
               echo "  force-clearing Flux finalizers on remaining HelmReleases"
               for hr in $(kubectl -n "$NS" get hr -l "$SEL" --no-headers -o custom-columns=NAME:.metadata.name 2>/dev/null); do
                 echo "    patching $hr"
                 kubectl -n "$NS" patch hr "$hr" --type=merge \
                   -p '{"metadata":{"finalizers":[]}}' || true
+                echo "    cleaning leftover host-side resources for $hr"
+                FLUX_SEL="helm.toolkit.fluxcd.io/name=$hr,helm.toolkit.fluxcd.io/namespace=$NS"
+                kubectl -n "$NS" delete \
+                  all,configmap,serviceaccount,role,rolebinding,secret \
+                  -l "$FLUX_SEL" --ignore-not-found=true --wait=false || true
+                # Helm release storage secrets are not labelled with
+                # the helm.toolkit.fluxcd.io selector; drop them by name
+                # prefix so the next install on the same release name
+                # starts from a clean slate.
+                kubectl -n "$NS" delete secret \
+                  $(kubectl -n "$NS" get secret -o name 2>/dev/null \
+                    | grep -F "secret/sh.helm.release.v1.$hr." || true) \
+                  --ignore-not-found=true || true
               done
 
               echo "Step 3: Deleting KamajiControlPlane {{ .Release.Name }}"
