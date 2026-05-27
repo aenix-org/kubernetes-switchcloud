@@ -57,6 +57,10 @@ controlPlane:
 ## When empty the chart uses the default <release>.<namespace>.svc:6443
 host: ""
 
+## @section Ingress
+## @param ingressClassName IngressClass for the Kamaji-managed apiserver Ingress. When empty (default), falls back to `_namespace.ingress` (= the parent tenant namespace name) so per-tenant Ingress controllers like `tenant-root` keep working unchanged. Set to e.g. `nginx` to route the apiserver through a host-level ingress controller instead.
+ingressClassName: ""
+
 ## @section Cluster network CIDRs
 ## Pod, service and CoreDNS CIDRs that the tenant cluster bootstraps with.
 ## These map onto CAPI Cluster.spec.clusterNetwork.{pods,services}.cidrBlocks
