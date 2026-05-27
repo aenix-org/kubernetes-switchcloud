@@ -41,10 +41,7 @@ spec:
         image: registry.k8s.io/build-image/debian-iptables:bookworm-v1.0.0
         securityContext:
           allowPrivilegeEscalation: false
-          # readOnlyRootFilesystem is intentionally NOT set: containerd masks
-          # /proc/sys read-only when it is true, which breaks the sysctl write
-          # below. The init container runs once with NET_ADMIN scoped to the
-          # boot phase and exits, so a writable rootfs adds negligible risk.
+          readOnlyRootFilesystem: true
           capabilities:
             drop: [ALL]
             add: [NET_ADMIN]
@@ -54,11 +51,22 @@ spec:
         - sh
         - -c
         - |
-          set -ex
-          # Allow routing of traffic that hits DNAT-rewritten 127.0.0.1
-          # from non-loopback interfaces (the same sysctl kube-proxy sets).
-          # Written via /proc to avoid pulling in procps.
-          echo 1 > /proc/sys/net/ipv4/conf/all/route_localnet
+          set -e
+          # route_localnet is required so traffic hitting our DNAT-rewritten
+          # 127.0.0.1 from non-loopback interfaces is actually routed. We
+          # cannot set this sysctl ourselves: /proc/sys is read-only inside
+          # containers under runc's default masked paths, and lifting that
+          # mask requires privileged or CAP_SYS_ADMIN, which defeats the
+          # point of scoping this init to NET_ADMIN only. The CNI (Cilium,
+          # kube-proxy) already enables route_localnet on every node as part
+          # of its own startup, so we just assert the precondition and let
+          # kubelet retry until it is satisfied.
+          current=$(cat /proc/sys/net/ipv4/conf/all/route_localnet)
+          if [ "$current" != "1" ]; then
+            echo "FATAL: net.ipv4.conf.all.route_localnet=$current, expected 1 (set by CNI). Retrying until satisfied."
+            exit 1
+          fi
+          set -x
           CHAIN=TENANT_APISERVER_PROXY
           iptables-nft -t nat -N $CHAIN 2>/dev/null || true
           iptables-nft -t nat -F $CHAIN
