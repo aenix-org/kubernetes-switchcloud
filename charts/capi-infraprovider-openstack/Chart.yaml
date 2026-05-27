@@ -2,7 +2,7 @@ apiVersion: v2
 name: capi-infraprovider-openstack
 description: Cluster API Provider OpenStack (CAPO) — system package for kubernetes-switchcloud
 type: application
-version: 0.1.0
+version: 0.1.1
 appVersion: "0.12.1"
 keywords:
   - cluster-api

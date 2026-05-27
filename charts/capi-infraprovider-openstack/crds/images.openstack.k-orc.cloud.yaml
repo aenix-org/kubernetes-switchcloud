@@ -1,0 +1,32 @@
+# Minimal CRD stub so CAPO can register the cache watcher for ORC Image.
+# CAPO v0.12+ uses ORC (k-orc.cloud) to manage OpenStack glance images via
+# CRs. Without this CRD, capo-controller-manager crashes with
+#   "failed to wait for openstackserver caches to sync: timed out waiting
+#   for cache to be synced for Kind *v1alpha1.Image"
+# and never reaches Ready, so CAPI Cluster reconciliation never starts.
+#
+# This is a SCHEMA-LESS stub (x-kubernetes-preserve-unknown-fields:true)
+# - CAPO only needs the GVK to exist, it does not author Image objects
+#   itself.
+# - The full ORC operator + its real CRDs are out of scope for this chart;
+#   when ORC is installed properly, its bundle will overwrite this stub.
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: images.openstack.k-orc.cloud
+spec:
+  group: openstack.k-orc.cloud
+  names:
+    kind: Image
+    listKind: ImageList
+    plural: images
+    singular: image
+  scope: Namespaced
+  versions:
+  - name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        type: object
+        x-kubernetes-preserve-unknown-fields: true
+    served: true
+    storage: true
