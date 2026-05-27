@@ -184,12 +184,22 @@ jobs:
       - name: Set up Helm
         uses: azure/setup-helm@v4
 
-      - name: Log in to GHCR
+      - name: Log in to GHCR (helm)
         run: |
           echo "${{ secrets.GITHUB_TOKEN }}" | \
             helm registry login ghcr.io \
               --username "${{ github.actor }}" \
               --password-stdin
+
+      # flux push artifact uses docker's config.json for OCI auth, separate
+      # from helm's own keyring. Without this step the bundle push gets
+      # `DENIED: requested access to the resource is denied`.
+      - name: Log in to GHCR (docker)
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Package charts
         run: |
