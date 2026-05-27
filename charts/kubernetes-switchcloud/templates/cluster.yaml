@@ -422,7 +422,14 @@ metadata:
   namespace: {{ $.Release.Namespace }}
 spec:
   clusterName: {{ $.Release.Name }}
-  maxUnhealthy: {{ $group.maxUnhealthy | default 1 }}
+  # Default 0 trips MHC's safety brake on any unhealthy machine, so it is
+  # observe-only. With the previous default of 1, a single-node MachineDeployment
+  # would death-spiral during bootstrap: the only node boots NotReady (no CNI
+  # installed yet), 1 unhealthy <= 1 maxUnhealthy triggers remediation, the
+  # Machine is deleted and recreated, the new Machine boots NotReady, loop
+  # forever. Operators wanting steady-state self-healing on multi-node groups
+  # should override per node group (e.g. maxUnhealthy: 1 or "50%").
+  maxUnhealthy: {{ $group.maxUnhealthy | default 0 }}
   nodeStartupTimeout: {{ $group.nodeStartupTimeout | default "10m" }}
   selector:
     matchLabels:
