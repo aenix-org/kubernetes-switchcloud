@@ -1,4 +1,4 @@
 apiVersion: v2
 name: kubernetes-switchcloud-platform
-version: 0.0.9
+version: 0.0.10
 description: Platform chart — registers kubernetes-switchcloud in Cozystack and installs CAPI providers
