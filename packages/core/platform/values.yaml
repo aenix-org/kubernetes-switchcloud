@@ -1,0 +1,22 @@
+## @section Talos edge router
+## Pass-through to the talos-edge-router chart (charts/talos-edge-router).
+## Use to switch the Service from ClusterIP + ipsync-managed externalIPs to a
+## LoadBalancer Service whose public IP is owned by an external LB controller
+## (MetalLB IP-sharing with ingress-nginx is the driving case).
+##
+## Default leaves the router in ClusterIP mode so existing deployments behave
+## unchanged.
+##
+## Example for MetalLB IP-sharing with ingress-nginx on the same public IP:
+##
+##   talosEdgeRouter:
+##     service:
+##       type: LoadBalancer
+##       loadBalancerIP: "203.0.113.10"
+##       annotations:
+##         metallb.universe.tf/allow-shared-ip: "talos-shared"
+talosEdgeRouter:
+  service:
+    type: ClusterIP
+    loadBalancerIP: ""
+    annotations: {}
