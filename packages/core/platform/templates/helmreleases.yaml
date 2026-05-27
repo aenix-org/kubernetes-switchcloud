@@ -23,6 +23,10 @@ spec:
   upgrade:
     remediation:
       retries: -1
+  {{- with .Values.talosEdgeRouter }}
+  values:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
 ---
 apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
