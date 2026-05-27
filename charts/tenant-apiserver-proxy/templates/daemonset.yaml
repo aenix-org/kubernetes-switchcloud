@@ -41,7 +41,10 @@ spec:
         image: registry.k8s.io/build-image/debian-iptables:bookworm-v1.0.0
         securityContext:
           allowPrivilegeEscalation: false
-          readOnlyRootFilesystem: true
+          # readOnlyRootFilesystem is intentionally NOT set: containerd masks
+          # /proc/sys read-only when it is true, which breaks the sysctl write
+          # below. The init container runs once with NET_ADMIN scoped to the
+          # boot phase and exits, so a writable rootfs adds negligible risk.
           capabilities:
             drop: [ALL]
             add: [NET_ADMIN]
