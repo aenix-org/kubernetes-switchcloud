@@ -16,99 +16,70 @@ import (
 	"github.com/gophercloud/gophercloud/v2/pagination"
 )
 
-// ResolveVIPSubnet returns the Neutron subnet ID where the controller
-// should ask Octavia to allocate the LB VIP. The override path (caller
-// passes a non-empty explicit subnet ID) short-circuits; otherwise the
-// function auto-picks the first IPv4 subnet of the first
-// router:external=true network in the tenant project.
+// VIPTarget tells Octavia where to allocate the VIP. Either SubnetID
+// or NetworkID is set, never both. When the operator provides an
+// explicit subnet override on the KubernetesSwitchcloud CR we use
+// SubnetID; otherwise we fall back to NetworkID and let Octavia pick
+// the subnet itself.
 //
-// The auto-pick logic matches the Switch Cloud zhw layout (one external
-// network "public" with dual-stack subnets), but is generic: any
-// OpenStack project with at least one external network and at least
-// one IPv4 subnet on it will resolve deterministically. Operators with
-// multiple external networks or non-trivial layouts must set the
-// override on KubernetesSwitchcloud.spec.openstack.loadBalancer.vipSubnetID.
-func ResolveVIPSubnet(ctx context.Context, c *Clients, overrideID string) (string, error) {
-	if overrideID != "" {
-		return overrideID, nil
+// The fallback exists because in Switch Cloud zhw (and many other
+// public OpenStack deployments) the external network "public" is
+// admin-owned: tenants can see the network but the
+// `subnets.list?network_id=...` call returns empty for them. Passing
+// NetworkID side-steps that visibility hole — Octavia's API runs
+// elevated and can resolve the subnet on the tenant's behalf.
+type VIPTarget struct {
+	SubnetID  string
+	NetworkID string
+}
+
+// ResolveVIPTarget chooses the VIP allocation target. If the caller
+// passes an explicit subnet ID (from KubernetesSwitchcloud.spec.openstack.loadBalancer.vipSubnetID)
+// we honour it; otherwise we auto-pick the first router:external=true
+// network in the tenant project and return its ID for Octavia to
+// resolve. Operators with multiple external networks must set the
+// override.
+func ResolveVIPTarget(ctx context.Context, c *Clients, overrideSubnetID string) (VIPTarget, error) {
+	if overrideSubnetID != "" {
+		return VIPTarget{SubnetID: overrideSubnetID}, nil
 	}
 
 	external, err := firstExternalNetwork(ctx, c)
 	if err != nil {
-		return "", errors.Wrap(err, "discovering external network")
+		return VIPTarget{}, errors.Wrap(err, "discovering external network")
 	}
 
-	ipv4SubnetID, err := firstIPv4Subnet(ctx, c, external.ID)
-	if err != nil {
-		return "", errors.Wrapf(err, "discovering IPv4 subnet of network %q", external.Name)
-	}
-
-	return ipv4SubnetID, nil
+	return VIPTarget{NetworkID: external.ID}, nil
 }
 
 // externalNetwork is the trimmed subset of fields we need from a
-// networks.Network — the full struct has dozens of fields, most of
-// which gophercloud's default extract handles fine but the
-// router:external attribute requires the external extension.
+// networks.Network — the router:external attribute lives in the
+// external extension, so we extract it via ExtractNetworksInto.
 type externalNetwork struct {
 	ID   string
 	Name string
 }
 
-func firstExternalNetwork(ctx context.Context, c *Clients) (externalNetwork, error) {
-	pager := networks.List(c.Network, networks.ListOpts{})
-
-	var found externalNetwork
-
-	err := pager.EachPage(ctx, func(_ context.Context, page pagination.Page) (bool, error) {
-		var list []struct {
-			ID              string `json:"id"`
-			Name            string `json:"name"`
-			RouterExternal  bool   `json:"router:external"`
-		}
-
-		err := networks.ExtractNetworksInto(page, &list)
-		if err != nil {
-			return false, errors.Wrap(err, "extracting networks page")
-		}
-
-		for _, n := range list {
-			if n.RouterExternal {
-				found = externalNetwork{ID: n.ID, Name: n.Name}
-
-				return false, nil // stop pagination, we have one
-			}
-		}
-
-		return true, nil
-	})
-	if err != nil {
-		return externalNetwork{}, err
+// ResolveMemberSubnet returns the IPv4 subnet ID of the worker-node
+// network so Octavia knows which subnet to dial pool members on. The
+// tenant owns this network, so subnets.list with NetworkID filter
+// works (unlike the admin-owned external network used for the VIP).
+func ResolveMemberSubnet(ctx context.Context, c *Clients, workerNetworkID string) (string, error) {
+	if workerNetworkID == "" {
+		return "", errors.New("worker network ID is empty (spec.openstack.network.id must be set on KubernetesSwitchcloud CR)")
 	}
 
-	if found.ID == "" {
-		return externalNetwork{}, errors.New("no router:external=true network found in tenant project")
-	}
-
-	return found, nil
-}
-
-func firstIPv4Subnet(ctx context.Context, c *Clients, networkID string) (string, error) {
-	pager := subnets.List(c.Network, subnets.ListOpts{NetworkID: networkID})
+	pager := subnets.List(c.Network, subnets.ListOpts{NetworkID: workerNetworkID})
 
 	var found string
 
 	err := pager.EachPage(ctx, func(_ context.Context, page pagination.Page) (bool, error) {
 		list, err := subnets.ExtractSubnets(page)
 		if err != nil {
-			return false, errors.Wrap(err, "extracting subnets page")
+			return false, errors.Wrap(err, "extracting worker subnets page")
 		}
 
 		for _, s := range list {
-			// Subnets list returns IPVersion as int; 4 == IPv4, 6 == IPv6.
-			// CIDR is also distinguishable by ":" presence, kept as
-			// belt-and-braces for OpenStack clouds that may not set
-			// IPVersion correctly.
 			if s.IPVersion == 4 || !strings.Contains(s.CIDR, ":") {
 				found = s.ID
 
@@ -123,7 +94,45 @@ func firstIPv4Subnet(ctx context.Context, c *Clients, networkID string) (string,
 	}
 
 	if found == "" {
-		return "", errors.Newf("no IPv4 subnet on external network %q", networkID)
+		return "", errors.Newf("no IPv4 subnet on worker network %q", workerNetworkID)
+	}
+
+	return found, nil
+}
+
+func firstExternalNetwork(ctx context.Context, c *Clients) (externalNetwork, error) {
+	pager := networks.List(c.Network, networks.ListOpts{})
+
+	var found externalNetwork
+
+	err := pager.EachPage(ctx, func(_ context.Context, page pagination.Page) (bool, error) {
+		var list []struct {
+			ID             string `json:"id"`
+			Name           string `json:"name"`
+			RouterExternal bool   `json:"router:external"`
+		}
+
+		err := networks.ExtractNetworksInto(page, &list)
+		if err != nil {
+			return false, errors.Wrap(err, "extracting networks page")
+		}
+
+		for _, n := range list {
+			if n.RouterExternal {
+				found = externalNetwork{ID: n.ID, Name: n.Name}
+
+				return false, nil
+			}
+		}
+
+		return true, nil
+	})
+	if err != nil {
+		return externalNetwork{}, err
+	}
+
+	if found.ID == "" {
+		return externalNetwork{}, errors.New("no router:external=true network found in tenant project")
 	}
 
 	return found, nil

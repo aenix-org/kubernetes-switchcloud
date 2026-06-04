@@ -37,10 +37,11 @@ const TenantNamespace = "tenant-root"
 // `KubernetesSwitchcloud.spec.openstack.loadBalancer` plus the
 // credentials needed to talk to OpenStack on that tenant's behalf.
 type LoadBalancerConfig struct {
-	Enabled        bool
-	VIPSubnetID    string
-	ProviderDriver string
-	Creds          openstack.Credentials
+	Enabled         bool
+	VIPSubnetID     string
+	ProviderDriver  string
+	WorkerNetworkID string
+	Creds           openstack.Credentials
 }
 
 var kscGVR = schema.GroupVersionResource{
@@ -83,6 +84,11 @@ func Resolve(ctx context.Context, mgmtClient ctrlclient.Client, tenant string) (
 
 	providerDriver, _, _ := unstructured.NestedString(ksc.Object, "spec", "openstack", "loadBalancer", "providerDriver")
 	cfg.ProviderDriver = providerDriver
+
+	// Worker-node network ID — same one CAPI uses for tenant nodes,
+	// required so pool members get the correct subnet attached.
+	workerNetID, _, _ := unstructured.NestedString(ksc.Object, "spec", "openstack", "network", "id")
+	cfg.WorkerNetworkID = workerNetID
 
 	creds, err := resolveCredentials(ctx, mgmtClient, ksc)
 	if err != nil {
