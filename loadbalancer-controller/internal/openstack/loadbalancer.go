@@ -19,14 +19,15 @@ import (
 	corev1 "k8s.io/api/core/v1"
 )
 
-// Octavia provisioning_status values we care about.
+// Octavia provisioning_status values we care about. PENDING_CREATE and
+// PENDING_UPDATE are intentionally absent: every site that inspects
+// status treats them through a `default:` arm (yield + requeue),
+// so naming them would just be dead aliases.
 const (
-	statusActive         = "ACTIVE"
-	statusError          = "ERROR"
-	statusPendingCreate  = "PENDING_CREATE"
-	statusPendingUpdate  = "PENDING_UPDATE"
-	statusPendingDelete  = "PENDING_DELETE"
-	managedNamePrefix    = "cozystack:"
+	statusActive        = "ACTIVE"
+	statusError         = "ERROR"
+	statusPendingDelete = "PENDING_DELETE"
+	managedNamePrefix   = "cozystack:"
 )
 
 // ServiceLBName is the Octavia LB `name` we set so that we can find the
