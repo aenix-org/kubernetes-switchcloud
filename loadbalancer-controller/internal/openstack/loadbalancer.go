@@ -57,7 +57,7 @@ func EnsureLB(
 	c *Clients,
 	tenant string,
 	svc *corev1.Service,
-	vipSubnetID string,
+	vip VIPTarget,
 	provider string,
 ) (lb *loadbalancers.LoadBalancer, pending bool, err error) {
 	name := ServiceLBName(tenant, svc.Namespace, svc.Name)
@@ -85,10 +85,11 @@ func EnsureLB(
 	}
 
 	created, err := loadbalancers.Create(ctx, c.LoadBalancer, loadbalancers.CreateOpts{
-		Name:        name,
-		Description: fmt.Sprintf("Managed by Cozystack loadbalancer-controller; tenant=%s ns=%s svc=%s", tenant, svc.Namespace, svc.Name),
-		Provider:    provider,
-		VipSubnetID: vipSubnetID,
+		Name:         name,
+		Description:  fmt.Sprintf("Managed by Cozystack loadbalancer-controller; tenant=%s ns=%s svc=%s", tenant, svc.Namespace, svc.Name),
+		Provider:     provider,
+		VipSubnetID:  vip.SubnetID,
+		VipNetworkID: vip.NetworkID,
 	}).Extract()
 	if err != nil {
 		return nil, false, errors.Wrap(err, "creating Octavia LB")
@@ -156,6 +157,7 @@ func SyncListenersAndMembers(
 	lb *loadbalancers.LoadBalancer,
 	svc *corev1.Service,
 	memberIPs []string,
+	memberSubnetID string,
 ) (pending bool, err error) {
 	if lb.ProvisioningStatus != statusActive {
 		// Don't try to mutate while Octavia is still settling.
@@ -212,7 +214,7 @@ func SyncListenersAndMembers(
 			return true, nil
 		}
 
-		changed, err := syncMembers(ctx, c, pool.ID, p.NodePort, memberIPs, lb.VipSubnetID)
+		changed, err := syncMembers(ctx, c, pool.ID, p.NodePort, memberIPs, memberSubnetID)
 		if err != nil {
 			return false, errors.Wrapf(err, "syncing members for pool %s", pool.ID)
 		}

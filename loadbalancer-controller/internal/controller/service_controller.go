@@ -155,12 +155,17 @@ func (r *tenantServiceReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		return ctrl.Result{}, errors.Wrap(err, "building OpenStack clients")
 	}
 
-	vipSubnetID, err := openstack.ResolveVIPSubnet(ctx, clients, cfg.VIPSubnetID)
+	vipTarget, err := openstack.ResolveVIPTarget(ctx, clients, cfg.VIPSubnetID)
 	if err != nil {
-		return ctrl.Result{}, errors.Wrap(err, "resolving VIP subnet")
+		return ctrl.Result{}, errors.Wrap(err, "resolving VIP target")
 	}
 
-	lb, pending, err := openstack.EnsureLB(ctx, clients, r.tenant, svc, vipSubnetID, cfg.ProviderDriver)
+	memberSubnetID, err := openstack.ResolveMemberSubnet(ctx, clients, cfg.WorkerNetworkID)
+	if err != nil {
+		return ctrl.Result{}, errors.Wrap(err, "resolving member subnet")
+	}
+
+	lb, pending, err := openstack.EnsureLB(ctx, clients, r.tenant, svc, vipTarget, cfg.ProviderDriver)
 	if err != nil {
 		return ctrl.Result{}, errors.Wrap(err, "ensuring Octavia LB")
 	}
@@ -185,7 +190,7 @@ func (r *tenantServiceReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		return ctrl.Result{}, errors.Wrap(err, "listing tenant node IPs")
 	}
 
-	if pending, err := openstack.SyncListenersAndMembers(ctx, clients, lb, svc, memberIPs); err != nil {
+	if pending, err := openstack.SyncListenersAndMembers(ctx, clients, lb, svc, memberIPs, memberSubnetID); err != nil {
 		return ctrl.Result{}, errors.Wrap(err, "syncing listeners and members")
 	} else if pending {
 		return ctrl.Result{RequeueAfter: pendingRequeue}, nil
