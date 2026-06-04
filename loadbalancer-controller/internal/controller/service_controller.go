@@ -7,23 +7,26 @@ Licensed under the Apache License, Version 2.0 (the "License");
 // Package controller wires Service-watch reconcilers, one per
 // discovered tenant cluster, into the controller-runtime manager.
 //
-// v1: on every Service event we resolve the tenant's
-// KubernetesSwitchcloud CR, short-circuit when the loadBalancer
-// feature is opted out, and otherwise call into internal/openstack to
-// ensure the matching Octavia LB + listeners + pool + members. The
-// reconciler then patches the Service.status.loadBalancer.ingress
-// back into the tenant cluster so kube-proxy / kubectl get svc shows
-// the assigned VIP.
+// On every Service event we resolve the tenant's KubernetesSwitchcloud
+// CR, short-circuit when the loadBalancer feature is opted out, and
+// otherwise call into internal/openstack to ensure the matching
+// Octavia LB + listeners + pool + members. The reconciler then
+// patches the Service.status.loadBalancer.ingress back into the
+// tenant cluster so kube-proxy / kubectl get svc shows the assigned
+// VIP. A finalizer guarantees we get a chance to delete the LB even
+// when the Service is removed or its type is changed away from
+// LoadBalancer.
 package controller
 
 import (
 	"context"
-	"log/slog"
 	"time"
 
 	"github.com/cockroachdb/errors"
+	"github.com/go-logr/logr"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
@@ -34,14 +37,21 @@ import (
 	"github.com/aenix-org/kubernetes-switchcloud/loadbalancer-controller/internal/openstack"
 )
 
+// FinalizerName is added to every Service the controller is responsible
+// for. Its presence is the signal that there may be an Octavia LB out
+// there that needs cleaning up before the Service object can disappear
+// from the apiserver — covers both Service deletion and type changes
+// away from LoadBalancer (where the spec we'd need to compute the LB
+// name is otherwise lost).
+const FinalizerName = "loadbalancer.switchcloud.aenix.io/cleanup"
+
 // ServiceReconciler attaches a controller-runtime controller to every
 // tenant's cluster.Cluster so that each tenant gets an independent
-// Service watch and work queue. v1 dispatches reconciles into the
-// OpenStack package.
+// Service watch and work queue.
 type ServiceReconciler struct {
 	Registry   *multicluster.Registry
 	MgmtClient client.Client
-	Log        *slog.Logger
+	Log        logr.Logger
 }
 
 // SetupWithManager registers one controller per tenant. Each tenant's
@@ -54,7 +64,7 @@ func (r *ServiceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			tenant:       tenant,
 			tenantClient: c.GetClient(),
 			mgmtClient:   r.MgmtClient,
-			log:          r.Log.With(slog.String("tenant", tenant)),
+			log:          r.Log.WithValues("tenant", tenant),
 		}
 
 		err := ctrl.NewControllerManagedBy(mgr).
@@ -76,11 +86,17 @@ func (r *ServiceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 // controller doesn't burn API calls.
 const memberResyncAfter = 60 * time.Second
 
+// pendingRequeue is used while Octavia is mid-operation
+// (PENDING_CREATE / PENDING_UPDATE / PENDING_DELETE). We yield the
+// worker rather than block it; the next reconcile picks up where this
+// one left off when the LB becomes ACTIVE.
+const pendingRequeue = 5 * time.Second
+
 type tenantServiceReconciler struct {
 	tenant       string
 	tenantClient client.Client
 	mgmtClient   client.Client
-	log          *slog.Logger
+	log          logr.Logger
 }
 
 func (r *tenantServiceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -89,29 +105,48 @@ func (r *tenantServiceReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	err := r.tenantClient.Get(ctx, req.NamespacedName, svc)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
-			return r.reconcileDeleted(ctx, req)
+			// Object already gone (e.g. after we removed our finalizer
+			// in a previous reconcile). Nothing to do.
+			return ctrl.Result{}, nil
 		}
 
 		return ctrl.Result{}, errors.Wrap(err, "fetching Service")
 	}
 
-	if svc.Spec.Type != corev1.ServiceTypeLoadBalancer {
-		// Type changed away from LoadBalancer — make sure we don't
-		// leave a paid OpenStack LB behind from a previous reconcile.
-		return r.reconcileDeleted(ctx, req)
-	}
-
+	// Resolve config once. Cleanup paths need it too, so do it up
+	// front. If the CR itself is gone we treat the controller as
+	// disabled for this tenant — same as opted-out.
 	cfg, err := ksc.Resolve(ctx, r.mgmtClient, r.tenant)
 	if err != nil {
+		if ksc.IsNotFound(err) {
+			return r.dropFinalizer(ctx, svc)
+		}
+
 		return ctrl.Result{}, errors.Wrap(err, "resolving KubernetesSwitchcloud config")
 	}
 
-	if !cfg.Enabled {
-		r.log.Debug("loadBalancer disabled on KubernetesSwitchcloud spec; ignoring",
-			slog.String("namespace", svc.Namespace),
-			slog.String("name", svc.Name),
-		)
+	// Deletion + type-change cleanup both flow through here. The
+	// finalizer is the contract that lets us hold the Service object
+	// open long enough to delete the matching Octavia LB.
+	managed := svc.Spec.Type == corev1.ServiceTypeLoadBalancer && cfg.Enabled
+	beingDeleted := !svc.DeletionTimestamp.IsZero()
 
+	if !managed || beingDeleted {
+		return r.cleanup(ctx, svc, cfg)
+	}
+
+	// Service is a LoadBalancer and feature is on — make sure the
+	// finalizer is set before we provision anything OpenStack-side.
+	if !containsString(svc.Finalizers, FinalizerName) {
+		patched := svc.DeepCopy()
+		patched.Finalizers = append(patched.Finalizers, FinalizerName)
+
+		if err := r.tenantClient.Patch(ctx, patched, client.MergeFrom(svc)); err != nil {
+			return ctrl.Result{}, errors.Wrap(err, "adding finalizer")
+		}
+
+		// The patch updated resourceVersion; let the watch deliver
+		// the next event so we work against a fresh object.
 		return ctrl.Result{}, nil
 	}
 
@@ -125,27 +160,35 @@ func (r *tenantServiceReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		return ctrl.Result{}, errors.Wrap(err, "resolving VIP subnet")
 	}
 
-	lb, err := openstack.EnsureLB(ctx, clients, r.tenant, svc, vipSubnetID, cfg.ProviderDriver)
+	lb, pending, err := openstack.EnsureLB(ctx, clients, r.tenant, svc, vipSubnetID, cfg.ProviderDriver)
 	if err != nil {
 		return ctrl.Result{}, errors.Wrap(err, "ensuring Octavia LB")
 	}
 
+	if pending {
+		// LB still mid-operation. Don't block the worker; let it
+		// settle on the next reconcile.
+		r.log.V(1).Info("LB still pending; requeueing",
+			"namespace", svc.Namespace,
+			"name", svc.Name,
+		)
+
+		return ctrl.Result{RequeueAfter: pendingRequeue}, nil
+	}
+
+	// Member list reflects current Ready Nodes. Empty is a legitimate
+	// state (zero-scale tenant, all nodes NotReady) — feed it through
+	// SyncListenersAndMembers so stale members are cleared. We still
+	// patch the VIP onto status regardless.
 	memberIPs, err := r.tenantNodeIPs(ctx)
 	if err != nil {
 		return ctrl.Result{}, errors.Wrap(err, "listing tenant node IPs")
 	}
 
-	if len(memberIPs) == 0 {
-		r.log.Warn("no Ready tenant nodes; skipping pool member sync (will requeue)",
-			slog.String("namespace", svc.Namespace),
-			slog.String("name", svc.Name),
-		)
-
-		return ctrl.Result{RequeueAfter: memberResyncAfter}, nil
-	}
-
-	if err := openstack.SyncListenersAndMembers(ctx, clients, lb, svc, memberIPs); err != nil {
+	if pending, err := openstack.SyncListenersAndMembers(ctx, clients, lb, svc, memberIPs); err != nil {
 		return ctrl.Result{}, errors.Wrap(err, "syncing listeners and members")
+	} else if pending {
+		return ctrl.Result{RequeueAfter: pendingRequeue}, nil
 	}
 
 	if err := r.patchStatus(ctx, svc, lb.VipAddress); err != nil {
@@ -153,59 +196,71 @@ func (r *tenantServiceReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	}
 
 	r.log.Info("Service reconciled",
-		slog.String("namespace", svc.Namespace),
-		slog.String("name", svc.Name),
-		slog.String("vip", lb.VipAddress),
-		slog.Int("members", len(memberIPs)),
+		"namespace", svc.Namespace,
+		"name", svc.Name,
+		"vip", lb.VipAddress,
+		"members", len(memberIPs),
 	)
 
 	return ctrl.Result{RequeueAfter: memberResyncAfter}, nil
 }
 
-// reconcileDeleted runs when the Service is gone (or no longer a
-// LoadBalancer). It removes any matching Octavia LB. Idempotent across
-// repeated calls — DeleteLB is a no-op once the LB is gone.
-func (r *tenantServiceReconciler) reconcileDeleted(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	cfg, err := ksc.Resolve(ctx, r.mgmtClient, r.tenant)
-	if err != nil {
-		if ksc.IsNotFound(err) {
-			// KubernetesSwitchcloud CR itself is gone — the v2
-			// finalizer will own cleanup; nothing to do here.
-			return ctrl.Result{}, nil
-		}
-
-		return ctrl.Result{}, errors.Wrap(err, "resolving KubernetesSwitchcloud config for delete")
-	}
-
-	if !cfg.Enabled {
+// cleanup deletes the Octavia LB (if any) for this Service and then
+// removes the finalizer so the apiserver can finish deletion. Runs on
+// both Service deletion and Service.spec.type changing away from
+// LoadBalancer (so we don't leak OpenStack resources). Idempotent.
+func (r *tenantServiceReconciler) cleanup(ctx context.Context, svc *corev1.Service, cfg *ksc.LoadBalancerConfig) (ctrl.Result, error) {
+	if !containsString(svc.Finalizers, FinalizerName) {
+		// Never claimed by us — nothing to clean up.
 		return ctrl.Result{}, nil
 	}
 
-	clients, err := openstack.NewClients(ctx, cfg.Creds)
-	if err != nil {
-		return ctrl.Result{}, errors.Wrap(err, "building OpenStack clients for delete")
+	if cfg.Enabled {
+		// Feature is enabled for this tenant, so an LB may exist.
+		clients, err := openstack.NewClients(ctx, cfg.Creds)
+		if err != nil {
+			return ctrl.Result{}, errors.Wrap(err, "building OpenStack clients for cleanup")
+		}
+
+		pending, err := openstack.DeleteLB(ctx, clients, r.tenant, svc)
+		if err != nil {
+			return ctrl.Result{}, errors.Wrap(err, "deleting Octavia LB")
+		}
+
+		if pending {
+			// LB is in PENDING_DELETE — requeue and check again rather
+			// than dropping the finalizer prematurely.
+			return ctrl.Result{RequeueAfter: pendingRequeue}, nil
+		}
 	}
 
-	dummy := &corev1.Service{}
-	dummy.Namespace = req.Namespace
-	dummy.Name = req.Name
+	return r.dropFinalizer(ctx, svc)
+}
 
-	if err := openstack.DeleteLB(ctx, clients, r.tenant, dummy); err != nil {
-		return ctrl.Result{}, errors.Wrap(err, "deleting Octavia LB")
+func (r *tenantServiceReconciler) dropFinalizer(ctx context.Context, svc *corev1.Service) (ctrl.Result, error) {
+	if !containsString(svc.Finalizers, FinalizerName) {
+		return ctrl.Result{}, nil
 	}
 
-	r.log.Info("LB deleted",
-		slog.String("namespace", req.Namespace),
-		slog.String("name", req.Name),
+	patched := svc.DeepCopy()
+	patched.Finalizers = removeString(patched.Finalizers, FinalizerName)
+
+	if err := r.tenantClient.Patch(ctx, patched, client.MergeFrom(svc)); err != nil {
+		return ctrl.Result{}, errors.Wrap(err, "removing finalizer")
+	}
+
+	r.log.Info("finalizer removed",
+		"namespace", svc.Namespace,
+		"name", svc.Name,
 	)
 
 	return ctrl.Result{}, nil
 }
 
 // tenantNodeIPs returns the InternalIPs of every Ready tenant Node.
-// Used as the Octavia pool's member set: kube-proxy on each node will
-// receive nodePort traffic from the LB and DNAT it to the Service's
-// backend Pods.
+// Returning the empty slice is fine — callers must be able to handle
+// "no Ready nodes" without skipping pool sync (otherwise stale members
+// leak when a tenant scales to zero).
 func (r *tenantServiceReconciler) tenantNodeIPs(ctx context.Context) ([]string, error) {
 	var nodes corev1.NodeList
 
@@ -259,12 +314,40 @@ func (r *tenantServiceReconciler) patchStatus(ctx context.Context, svc *corev1.S
 		}
 	}
 
-	patch := client.MergeFrom(svc.DeepCopy())
-	svc.Status.LoadBalancer.Ingress = []corev1.LoadBalancerIngress{{IP: vip}}
+	// Refetch the Service to get a clean status base (avoids racing
+	// with kube-controller-manager / kubelet who also touch status).
+	fresh := &corev1.Service{}
+	if err := r.tenantClient.Get(ctx, types.NamespacedName{Namespace: svc.Namespace, Name: svc.Name}, fresh); err != nil {
+		return errors.Wrap(err, "refetching Service before status patch")
+	}
 
-	if err := r.tenantClient.Status().Patch(ctx, svc, patch); err != nil {
+	patch := client.MergeFrom(fresh.DeepCopy())
+	fresh.Status.LoadBalancer.Ingress = []corev1.LoadBalancerIngress{{IP: vip}}
+
+	if err := r.tenantClient.Status().Patch(ctx, fresh, patch); err != nil {
 		return errors.Wrap(err, "patching Service status loadBalancer.ingress")
 	}
 
 	return nil
+}
+
+func containsString(slice []string, s string) bool {
+	for _, v := range slice {
+		if v == s {
+			return true
+		}
+	}
+
+	return false
+}
+
+func removeString(slice []string, s string) []string {
+	out := slice[:0]
+	for _, v := range slice {
+		if v != s {
+			out = append(out, v)
+		}
+	}
+
+	return out
 }
