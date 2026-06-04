@@ -57,9 +57,13 @@ func EnsureLB(
 	c *Clients,
 	tenant string,
 	svc *corev1.Service,
-	vip VIPTarget,
+	vipNetworkID string,
 	provider string,
 ) (lb *loadbalancers.LoadBalancer, pending bool, err error) {
+	if vipNetworkID == "" {
+		return nil, false, errors.New("vipNetworkID is empty")
+	}
+
 	name := ServiceLBName(tenant, svc.Namespace, svc.Name)
 
 	existing, err := findLBByName(ctx, c, name)
@@ -88,8 +92,7 @@ func EnsureLB(
 		Name:         name,
 		Description:  fmt.Sprintf("Managed by Cozystack loadbalancer-controller; tenant=%s ns=%s svc=%s", tenant, svc.Namespace, svc.Name),
 		Provider:     provider,
-		VipSubnetID:  vip.SubnetID,
-		VipNetworkID: vip.NetworkID,
+		VipNetworkID: vipNetworkID,
 	}).Extract()
 	if err != nil {
 		return nil, false, errors.Wrap(err, "creating Octavia LB")
@@ -118,6 +121,14 @@ func DeleteLB(ctx context.Context, c *Clients, tenant string, svc *corev1.Servic
 
 	if !IsManaged(existing) {
 		return false, errors.Newf("refusing to delete LB %s: name does not carry the %s prefix", existing.ID, managedNamePrefix)
+	}
+
+	// Detach + delete the FIP first while we still have a vip_port_id
+	// to look it up by. Cascade delete on the LB only covers Octavia
+	// resources (listeners/pools/members); the FIP lives in Neutron
+	// and would otherwise leak.
+	if err := DeleteFloatingIP(ctx, c, existing.VipPortID); err != nil {
+		return false, errors.Wrap(err, "detaching FIP before LB delete")
 	}
 
 	if existing.ProvisioningStatus == statusPendingDelete {
