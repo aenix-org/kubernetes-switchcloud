@@ -6,32 +6,27 @@ you may not use this file except in compliance with the License.
 */
 
 // loadbalancer-controller watches Service objects of type LoadBalancer
-// across every Cozystack KubernetesSwitchcloud tenant cluster and (in
-// later phases) provisions a matching Octavia LB in the underlying
-// Switch Cloud OpenStack project. The controller lives in the
-// management cluster so that tenant cluster users never need to handle
-// OpenStack credentials themselves — they just declare
-// `type: LoadBalancer` and an IP is returned.
-//
-// This file is the scaffold for v0: it boots a controller-runtime
-// manager, builds a multi-tenant registry keyed by KubernetesSwitchcloud
-// CR, attaches a Service watcher to every tenant's cluster.Cluster, and
-// logs LoadBalancer Service events. No OpenStack calls yet — that ships
-// in v1.
+// across every Cozystack KubernetesSwitchcloud tenant cluster and
+// provisions a matching Octavia LB in the underlying Switch Cloud
+// OpenStack project. The controller lives in the management cluster so
+// that tenant cluster users never need to handle OpenStack credentials
+// themselves — they just declare `type: LoadBalancer` and an IP is
+// returned.
 package main
 
 import (
 	"context"
 	"flag"
 	"fmt"
-	"log/slog"
 	"os"
 
 	"github.com/cockroachdb/errors"
+	"github.com/go-logr/logr"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/cluster"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
@@ -70,8 +65,8 @@ func run() error {
 	opts.zapOpts.BindFlags(flag.CommandLine)
 	flag.Parse()
 
-	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts.zapOpts)))
-	slogger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	logger := zap.New(zap.UseFlagOptions(&opts.zapOpts))
+	ctrl.SetLogger(logger)
 
 	cfg := ctrl.GetConfigOrDie()
 
@@ -89,21 +84,27 @@ func run() error {
 		return errors.Wrap(err, "creating manager")
 	}
 
-	registry, err := multicluster.Build(ctx, cfg, slogger)
+	registry, err := multicluster.Build(ctx, cfg, logger.WithName("registry"))
 	if err != nil {
 		return errors.Wrap(err, "building tenant cluster registry")
 	}
 
+	// Start each tenant cluster cache in its own goroutine instead of
+	// going through mgr.Add. controller-runtime treats Add'd Runnables
+	// as blocking — a single unreachable tenant (offline apiserver,
+	// stale kubeconfig, transient network blip during startup) would
+	// otherwise crash-loop the entire centralised controller and break
+	// every other tenant. Isolating the lifecycle here keeps the blast
+	// radius scoped to that one tenant. The shared context still
+	// cancels them all on SIGTERM.
 	for name, c := range registry.All() {
-		if err := mgr.Add(c); err != nil {
-			return errors.Wrapf(err, "registering tenant cluster %q with manager", name)
-		}
+		go runTenantCluster(ctx, name, c, logger)
 	}
 
 	r := &controller.ServiceReconciler{
 		Registry:   registry,
 		MgmtClient: mgr.GetClient(),
-		Log:        slogger,
+		Log:        logger.WithName("controller"),
 	}
 
 	if err := r.SetupWithManager(mgr); err != nil {
@@ -118,13 +119,27 @@ func run() error {
 		return errors.Wrap(err, "setting up readyz")
 	}
 
-	slogger.Info("Starting manager",
-		slog.String("tenants", fmt.Sprintf("%v", registry.Names())),
-	)
+	logger.Info("starting manager", "tenants", registry.Names())
 
 	if err := mgr.Start(ctx); err != nil {
 		return errors.Wrap(err, "manager exited with error")
 	}
 
 	return nil
+}
+
+// runTenantCluster runs a single tenant's cluster.Cluster cache. Errors
+// (apiserver unreachable, watch failures) are logged but never
+// propagated to the manager: this tenant simply produces no Service
+// events until the apiserver comes back, while every other tenant
+// keeps reconciling. Same pattern as kilo-clustermesh-operator.
+func runTenantCluster(ctx context.Context, name string, c cluster.Cluster, log logr.Logger) {
+	tenantLog := log.WithValues("tenant", name)
+
+	if err := c.Start(ctx); err != nil && ctx.Err() == nil {
+		// ctx.Err() == nil means the cancellation is coming from the
+		// cluster itself, not from a parent shutdown signal — log it
+		// as a genuine tenant failure rather than expected teardown.
+		tenantLog.Error(err, "tenant cluster cache exited with error")
+	}
 }

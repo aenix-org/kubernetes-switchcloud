@@ -10,23 +10,14 @@ Licensed under the Apache License, Version 2.0 (the "License");
 // between "find which tenants exist and how to dial them" and "actually
 // watch their resources" — the rest of the controller talks to tenants
 // through this opaque registry.
-//
-// v0 ships a deliberately minimal discovery: scan tenant-root namespace
-// for Secrets named `kubernetes-switchcloud-<tenant>-admin-kubeconfig`
-// (the Kamaji-issued admin-kubeconfig Secret) and treat each one as a
-// tenant. Later phases will switch to watching KubernetesSwitchcloud
-// CRs directly (with finalizers for cleanup) but for the scaffold the
-// Secret-list approach is enough to verify the multi-tenant
-// Service-watch plumbing works end-to-end.
 package multicluster
 
 import (
 	"context"
-	"io"
-	"log/slog"
 	"strings"
 
 	"github.com/cockroachdb/errors"
+	"github.com/go-logr/logr"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
@@ -57,13 +48,7 @@ type Registry struct {
 // build. Same pattern as kilo-clustermesh-operator: a partial registry
 // is safe because the rest of the controller best-efforts every
 // tenant independently.
-func Build(ctx context.Context, mgmtCfg *rest.Config, log *slog.Logger) (*Registry, error) {
-	if log == nil {
-		// slog.DiscardHandler is Go 1.24+; the module pins 1.23 to match
-		// the rest of the aenix-org tooling, so route to io.Discard.
-		log = slog.New(slog.NewTextHandler(io.Discard, nil))
-	}
-
+func Build(ctx context.Context, mgmtCfg *rest.Config, log logr.Logger) (*Registry, error) {
 	scheme := runtime.NewScheme()
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 
@@ -92,9 +77,9 @@ func Build(ctx context.Context, mgmtCfg *rest.Config, log *slog.Logger) (*Regist
 
 		kubeconfig, ok := s.Data[kubeconfigSecretKey]
 		if !ok || len(kubeconfig) == 0 {
-			log.Warn("tenant kubeconfig Secret missing super-admin.conf; skipping",
-				slog.String("tenant", tenant),
-				slog.String("secret", s.Name),
+			log.Info("tenant kubeconfig Secret missing super-admin.conf; skipping",
+				"tenant", tenant,
+				"secret", s.Name,
 			)
 
 			continue
@@ -102,9 +87,8 @@ func Build(ctx context.Context, mgmtCfg *rest.Config, log *slog.Logger) (*Regist
 
 		cfg, err := clientcmd.RESTConfigFromKubeConfig(kubeconfig)
 		if err != nil {
-			log.Warn("tenant kubeconfig unparseable; skipping",
-				slog.String("tenant", tenant),
-				slog.String("error", err.Error()),
+			log.Error(err, "tenant kubeconfig unparseable; skipping",
+				"tenant", tenant,
 			)
 
 			continue
@@ -112,17 +96,10 @@ func Build(ctx context.Context, mgmtCfg *rest.Config, log *slog.Logger) (*Regist
 
 		c, err := cluster.New(cfg, func(o *cluster.Options) {
 			o.Scheme = scheme
-			// TODO(v1): wrap controller-runtime's default dynamic
-			// mapper with the meta.ResettableRESTMapper wrapper from
-			// kilo-clustermesh-operator/internal/multicluster/mapper.go.
-			// Needed so the recovery path can invalidate stale
-			// discovery caches without restarting the pod. v0 doesn't
-			// have a recovery path yet, so the default is fine.
 		})
 		if err != nil {
-			log.Warn("cluster.New failed for tenant; skipping",
-				slog.String("tenant", tenant),
-				slog.String("error", err.Error()),
+			log.Error(err, "cluster.New failed for tenant; skipping",
+				"tenant", tenant,
 			)
 
 			continue
@@ -134,9 +111,7 @@ func Build(ctx context.Context, mgmtCfg *rest.Config, log *slog.Logger) (*Regist
 	return reg, nil
 }
 
-// All returns every tenant's cluster.Cluster keyed by tenant name. Used
-// by main.go to attach them to the controller-runtime manager via
-// mgr.Add so their caches actually start.
+// All returns every tenant's cluster.Cluster keyed by tenant name.
 func (r *Registry) All() map[string]cluster.Cluster {
 	return r.clusters
 }
@@ -158,4 +133,3 @@ func (r *Registry) Cluster(name string) (cluster.Cluster, bool) {
 
 	return c, ok
 }
-

@@ -72,6 +72,11 @@ spec:
     remediation:
       retries: -1
 ---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: cozy-loadbalancer-controller
+---
 # Centralised OpenStack LoadBalancer provisioner for KubernetesSwitchcloud
 # tenants. Lives in the management cluster, watches Service objects in
 # every tenant via Kamaji admin-kubeconfig Secrets, and creates Octavia
