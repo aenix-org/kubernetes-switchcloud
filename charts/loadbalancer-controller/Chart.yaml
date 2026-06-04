@@ -1,0 +1,15 @@
+apiVersion: v2
+name: loadbalancer-controller
+description: |
+  Centralised OpenStack LoadBalancer provisioner for Cozystack
+  KubernetesSwitchcloud tenants. Lives in the management cluster,
+  watches Service objects in every tenant via Kamaji admin-kubeconfig
+  Secrets, and creates matching Octavia LBs in Switch Cloud. Tenant
+  users get LoadBalancer Services without ever handling OpenStack
+  credentials themselves.
+type: application
+version: 0.0.0
+appVersion: "0.0.0"
+maintainers:
+  - name: Aenix
+    email: support@aenix.io

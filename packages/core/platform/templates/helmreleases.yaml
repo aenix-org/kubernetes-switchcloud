@@ -71,3 +71,27 @@ spec:
     crds: CreateReplace
     remediation:
       retries: -1
+---
+# Centralised OpenStack LoadBalancer provisioner for KubernetesSwitchcloud
+# tenants. Lives in the management cluster, watches Service objects in
+# every tenant via Kamaji admin-kubeconfig Secrets, and creates Octavia
+# LBs in Switch Cloud. Tenant cluster users never touch OpenStack creds.
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: loadbalancer-controller
+  namespace: cozy-loadbalancer-controller
+spec:
+  interval: 5m
+  releaseName: loadbalancer-controller
+  targetNamespace: cozy-loadbalancer-controller
+  chartRef:
+    kind: HelmChart
+    name: kubernetes-switchcloud-loadbalancer-controller
+    namespace: cozy-public
+  install:
+    remediation:
+      retries: -1
+  upgrade:
+    remediation:
+      retries: -1

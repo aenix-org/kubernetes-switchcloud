@@ -1,0 +1,82 @@
+{{- /*
+RBAC inside the management cluster. Two pieces:
+
+  * Role/RoleBinding in tenant-root — read tenant kubeconfig Secrets to
+    discover and dial each tenant's apiserver. Scoped to that single
+    namespace because Cozystack always puts admin-kubeconfig Secrets
+    there.
+
+  * ClusterRole/Binding for leader election (configmaps + leases in
+    the release namespace). Only required when leaderElection.enabled
+    so single-replica installs stay zero-RBAC for that.
+
+Authorisation INSIDE each tenant cluster is granted by the
+super-admin.conf kubeconfig embedded in the tenant's Secret, not by
+anything declared here. The controller does not need to (and must not)
+hold credentials for tenant-scoped resources on the management plane.
+*/ -}}
+{{- if .Values.rbac.create -}}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "loadbalancer-controller.fullname" . }}-tenant-discovery
+  namespace: tenant-root
+  labels:
+    {{- include "loadbalancer-controller.labels" . | nindent 4 }}
+rules:
+- apiGroups: [""]
+  resources: [secrets]
+  verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "loadbalancer-controller.fullname" . }}-tenant-discovery
+  namespace: tenant-root
+  labels:
+    {{- include "loadbalancer-controller.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "loadbalancer-controller.fullname" . }}-tenant-discovery
+subjects:
+- kind: ServiceAccount
+  name: {{ include "loadbalancer-controller.serviceAccountName" . }}
+  namespace: {{ .Release.Namespace }}
+{{- if .Values.leaderElection.enabled }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "loadbalancer-controller.fullname" . }}-leader-election
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "loadbalancer-controller.labels" . | nindent 4 }}
+rules:
+- apiGroups: [""]
+  resources: [configmaps]
+  verbs: [get, list, watch, create, update, patch, delete]
+- apiGroups: [coordination.k8s.io]
+  resources: [leases]
+  verbs: [get, list, watch, create, update, patch, delete]
+- apiGroups: [""]
+  resources: [events]
+  verbs: [create, patch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "loadbalancer-controller.fullname" . }}-leader-election
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "loadbalancer-controller.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "loadbalancer-controller.fullname" . }}-leader-election
+subjects:
+- kind: ServiceAccount
+  name: {{ include "loadbalancer-controller.serviceAccountName" . }}
+  namespace: {{ .Release.Namespace }}
+{{- end }}
+{{- end }}
