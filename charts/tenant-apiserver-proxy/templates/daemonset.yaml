@@ -17,6 +17,11 @@ spec:
       labels:
         app: tenant-apiserver-proxy
     spec:
+      # See templates/rbac.yaml for why this is a long-lived SA instead
+      # of a Helm post-install hook resource. Scoped tightly: a Role in
+      # `default` namespace with `services` get/patch on resourceNames
+      # [kubernetes], nothing else.
+      serviceAccountName: tenant-apiserver-proxy
       hostNetwork: true
       # Default makes the pod use the node's resolv.conf so the proxy can
       # resolve the upstream hostname through Talos NodeDNS even when the
@@ -64,6 +69,60 @@ spec:
           iptables-nft -t nat -C OUTPUT -j $CHAIN 2>/dev/null || iptables-nft -t nat -I OUTPUT 1 -j $CHAIN
           iptables-nft -t nat -C PREROUTING -j $CHAIN 2>/dev/null || iptables-nft -t nat -I PREROUTING 1 -j $CHAIN
           echo "DNAT installed for {{ .Values.kubernetesServiceIP }}:{{ .Values.kubernetesServicePort }} -> 127.0.0.1:{{ .Values.proxyPort }}"
+      # Mark default/kubernetes with service-proxy-name so kube-proxy /
+      # Cilium stop programming its ClusterIP redirect — after this the
+      # OUTPUT/PREROUTING DNAT installed above is the only thing
+      # steering traffic for that ClusterIP, which is the whole point
+      # of this DaemonSet.
+      #
+      # PATCH is idempotent in Kubernetes (no-op when the label already
+      # matches), so concurrent runs across every DS pod on every node
+      # are safe and converge on the same end state. Reaches the
+      # apiserver through its public hostname via Node DNS, not via the
+      # in-cluster Service ClusterIP — that ClusterIP is exactly what
+      # this DaemonSet exists to repair, so we cannot depend on it
+      # working here.
+      #
+      # Re-runs on every pod start, which means the label is also
+      # restored within seconds if anything ever strips it (operator
+      # change, helm rollback to an empty release, kubectl edit).
+      - name: ensure-service-proxy-name
+        image: curlimages/curl:8.10.1
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 65532
+          runAsGroup: 65532
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop: [ALL]
+          seccompProfile:
+            type: RuntimeDefault
+        command:
+        - sh
+        - -c
+        - |
+          set -eu
+          TOKEN=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
+          CA=/var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+          HOST="{{ .Values.apiserverHostname | default (regexReplaceAll ":\\d+$" .Values.upstream "") }}"
+          PORT="{{ .Values.apiserverPort | default 443 }}"
+          # --fail-with-body so non-2xx returns a non-zero exit and the
+          # init container retries (which is the desired self-healing
+          # behaviour — kubelet will rerun this until success).
+          curl --silent --show-error --fail-with-body \
+            --cacert "$CA" \
+            --header "Authorization: Bearer $TOKEN" \
+            --header "Content-Type: application/strategic-merge-patch+json" \
+            --request PATCH \
+            --data '{"metadata":{"labels":{"service.kubernetes.io/service-proxy-name":"{{ .Values.serviceProxyName }}"}}}' \
+            "https://${HOST}:${PORT}/api/v1/namespaces/default/services/kubernetes" \
+            --output /dev/null --write-out 'http=%{http_code}\n'
+        resources:
+          requests:
+            cpu: 10m
+            memory: 16Mi
+          limits:
+            memory: 32Mi
       containers:
       - name: proxy
         image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"

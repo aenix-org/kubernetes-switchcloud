@@ -1,0 +1,60 @@
+{{- /*
+RBAC for the DaemonSet's init container that idempotently labels
+default/kubernetes Service with service-proxy-name. Scoped as tightly
+as Kubernetes RBAC allows: Role in the `default` namespace, single
+resource by name, two verbs.
+
+Replaces the deprecated post-install Helm hook that lived in
+service-label-job.yaml. The hook pattern was fragile because:
+
+  - helm.sh/hook-delete-policy: hook-succeeded on the ServiceAccount
+    and ClusterRoleBinding would clean those up the moment the Job
+    succeeded the first time. On the next chart upgrade, Helm
+    recreated them before running the new Job — but only after
+    `before-hook-creation` deleted whatever was left from the previous
+    cycle. If a prior cycle's Job pod was still Pending (waiting for
+    a node to become Ready, common in target-cluster bootstrap or
+    recovery windows), kubelet would never find its ServiceAccount
+    token at mount time and the pod would deadlock in
+    ContainerCreating forever, blocking every subsequent helm upgrade.
+
+  - There was no self-healing path: if anything ever removed the
+    label after install (operator change, kubectl edit, helm rollback
+    that ran the hook on an empty release), the cluster silently lost
+    its kube-proxy bypass until the next helm upgrade.
+
+The DaemonSet init container approach fixes both: the ServiceAccount
+is a normal resource (no hook lifecycle), and the patch is reapplied
+on every DS pod start — so a deleted label is restored within seconds
+when any node's DS pod restarts.
+*/ -}}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: tenant-apiserver-proxy
+  namespace: kube-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: tenant-apiserver-proxy-labeler
+  namespace: default
+rules:
+- apiGroups: [""]
+  resources: [services]
+  resourceNames: [kubernetes]
+  verbs: [get, patch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: tenant-apiserver-proxy-labeler
+  namespace: default
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: tenant-apiserver-proxy-labeler
+subjects:
+- kind: ServiceAccount
+  name: tenant-apiserver-proxy
+  namespace: kube-system
