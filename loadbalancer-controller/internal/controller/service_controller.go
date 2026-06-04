@@ -113,6 +113,16 @@ func (r *tenantServiceReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		return ctrl.Result{}, errors.Wrap(err, "fetching Service")
 	}
 
+	// Fast path: Service that is neither type=LoadBalancer nor carries
+	// our finalizer is none of our business. Most Services in a tenant
+	// cluster (kubernetes, kube-dns, in-cluster operators, …) fall
+	// here. Returning before ksc.Resolve avoids both unnecessary
+	// management-cluster API calls and noisy errors when the tenant's
+	// loadBalancer config is intentionally minimal.
+	if svc.Spec.Type != corev1.ServiceTypeLoadBalancer && !containsString(svc.Finalizers, FinalizerName) {
+		return ctrl.Result{}, nil
+	}
+
 	// Resolve config once. Cleanup paths need it too, so do it up
 	// front. If the CR itself is gone we treat the controller as
 	// disabled for this tenant — same as opted-out.
@@ -130,6 +140,22 @@ func (r *tenantServiceReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	// open long enough to delete the matching Octavia LB.
 	managed := svc.Spec.Type == corev1.ServiceTypeLoadBalancer && cfg.Enabled
 	beingDeleted := !svc.DeletionTimestamp.IsZero()
+
+	if !managed && cfg.MisconfiguredReason != "" && svc.Spec.Type == corev1.ServiceTypeLoadBalancer {
+		// Operator opted in but the config is incomplete. Log once
+		// at Warning level and stop — no requeue, the next CR
+		// update will re-trigger reconcile via the management
+		// cluster watch (out of scope here; for now operators must
+		// rely on the controller noticing on the next Service
+		// event after they fix the CR).
+		r.log.Info("loadBalancer feature misconfigured; skipping Service",
+			"namespace", svc.Namespace,
+			"name", svc.Name,
+			"reason", cfg.MisconfiguredReason,
+		)
+
+		return ctrl.Result{}, nil
+	}
 
 	if !managed || beingDeleted {
 		return r.cleanup(ctx, svc, cfg)
