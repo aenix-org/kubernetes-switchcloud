@@ -155,17 +155,12 @@ func (r *tenantServiceReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		return ctrl.Result{}, errors.Wrap(err, "building OpenStack clients")
 	}
 
-	vipTarget, err := openstack.ResolveVIPTarget(ctx, clients, cfg.VIPSubnetID)
-	if err != nil {
-		return ctrl.Result{}, errors.Wrap(err, "resolving VIP target")
-	}
-
-	memberSubnetID, err := openstack.ResolveMemberSubnet(ctx, clients, cfg.WorkerNetworkID)
+	memberSubnetID, err := openstack.ResolveMemberSubnet(ctx, clients, cfg.VIPNetworkID)
 	if err != nil {
 		return ctrl.Result{}, errors.Wrap(err, "resolving member subnet")
 	}
 
-	lb, pending, err := openstack.EnsureLB(ctx, clients, r.tenant, svc, vipTarget, cfg.ProviderDriver)
+	lb, pending, err := openstack.EnsureLB(ctx, clients, r.tenant, svc, cfg.VIPNetworkID, cfg.ProviderDriver)
 	if err != nil {
 		return ctrl.Result{}, errors.Wrap(err, "ensuring Octavia LB")
 	}
@@ -196,7 +191,24 @@ func (r *tenantServiceReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		return ctrl.Result{RequeueAfter: pendingRequeue}, nil
 	}
 
-	if err := r.patchStatus(ctx, svc, lb.VipAddress); err != nil {
+	// Decide the externally-visible address. When floatingNetworkID
+	// is configured the LB's VIP is internal (tenant-network) and the
+	// FIP is what tenant users hit; otherwise we publish the VIP
+	// itself (useful for IPv6-only or internal-only setups).
+	publicAddr := lb.VipAddress
+
+	if cfg.FloatingNetworkID != "" {
+		fipDesc := openstack.ServiceLBName(r.tenant, svc.Namespace, svc.Name)
+
+		fipAddr, err := openstack.EnsureFloatingIP(ctx, clients, lb.VipPortID, cfg.FloatingNetworkID, cfg.FloatingSubnetID, fipDesc)
+		if err != nil {
+			return ctrl.Result{}, errors.Wrap(err, "ensuring floating IP")
+		}
+
+		publicAddr = fipAddr
+	}
+
+	if err := r.patchStatus(ctx, svc, publicAddr); err != nil {
 		return ctrl.Result{}, errors.Wrap(err, "patching Service status")
 	}
 
@@ -204,6 +216,7 @@ func (r *tenantServiceReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		"namespace", svc.Namespace,
 		"name", svc.Name,
 		"vip", lb.VipAddress,
+		"publicAddress", publicAddr,
 		"members", len(memberIPs),
 	)
 
