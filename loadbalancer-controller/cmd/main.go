@@ -26,10 +26,13 @@ import (
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/cluster"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
+
+	"github.com/aenix-org/kubernetes-switchcloud/loadbalancer-controller/internal/ksc"
 
 	"github.com/aenix-org/kubernetes-switchcloud/loadbalancer-controller/internal/controller"
 	"github.com/aenix-org/kubernetes-switchcloud/loadbalancer-controller/internal/multicluster"
@@ -79,6 +82,17 @@ func run() error {
 		HealthProbeBindAddress: opts.probeAddr,
 		LeaderElection:         opts.enableLeaderElection,
 		LeaderElectionID:       "9b27e8c3.loadbalancer.switchcloud.aenix.io",
+		// Scope the management-cluster cache to tenant-root only.
+		// Every mgmt-side resource the controller reads (KubernetesSwitchcloud
+		// CRs, openstack credential Secrets) lives there. Without this scope
+		// controller-runtime spins up cluster-wide informers for Secrets and
+		// the ServiceAccount's namespace-bound Role can't satisfy them, which
+		// floods the log with RBAC denials and blocks reconciliation.
+		Cache: cache.Options{
+			DefaultNamespaces: map[string]cache.Config{
+				ksc.TenantNamespace: {},
+			},
+		},
 	})
 	if err != nil {
 		return errors.Wrap(err, "creating manager")
