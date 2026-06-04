@@ -10,7 +10,6 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/cockroachdb/errors"
 	"github.com/gophercloud/gophercloud/v2/openstack/loadbalancer/v2/listeners"
@@ -20,31 +19,38 @@ import (
 	corev1 "k8s.io/api/core/v1"
 )
 
-// nameLabel is the Octavia LB `name` we set so that we can find the LB
-// later without relying on a separate tag store. Format:
+// Octavia provisioning_status values we care about.
+const (
+	statusActive         = "ACTIVE"
+	statusError          = "ERROR"
+	statusPendingCreate  = "PENDING_CREATE"
+	statusPendingUpdate  = "PENDING_UPDATE"
+	statusPendingDelete  = "PENDING_DELETE"
+	managedNamePrefix    = "cozystack:"
+)
+
+// ServiceLBName is the Octavia LB `name` we set so that we can find the
+// LB later without relying on a separate tag store. Format:
 //
 //	cozystack:<tenant>/<namespace>/<service>
 //
-// Plenty of room — Octavia name allows 255 chars and we encode three
-// short Kubernetes identifiers. Resolution is unique because tenants
-// can't share project namespaces (each KubernetesSwitchcloud lives in
-// its own OpenStack project).
+// Resolution is unique because tenants can't share project namespaces
+// (each KubernetesSwitchcloud lives in its own OpenStack project).
 func ServiceLBName(tenant, namespace, name string) string {
-	return fmt.Sprintf("cozystack:%s/%s/%s", tenant, namespace, name)
+	return fmt.Sprintf("%s%s/%s/%s", managedNamePrefix, tenant, namespace, name)
 }
 
 // IsManaged reports whether an Octavia LB was created by this
-// controller, by looking at the `name` prefix. Used during delete /
-// sweep to avoid stomping on LBs that an operator created by hand or
-// another tool provisioned.
+// controller, by looking at the `name` prefix.
 func IsManaged(lb *loadbalancers.LoadBalancer) bool {
-	return strings.HasPrefix(lb.Name, "cozystack:")
+	return strings.HasPrefix(lb.Name, managedNamePrefix)
 }
 
-// EnsureLB returns the LoadBalancer for the given Service (creating it
-// if missing), driving it to provisioning_status=ACTIVE before
-// returning. provider defaults to "ovn" when empty — the only working
-// provider in Switch Cloud zhw.
+// EnsureLB returns the LoadBalancer for the given Service, creating it
+// if missing. It never blocks waiting for status to settle: callers get
+// pending=true whenever the LB is mid-operation and should requeue
+// instead of holding the worker. provider defaults to "ovn" when empty
+// (the only working provider in Switch Cloud zhw).
 func EnsureLB(
 	ctx context.Context,
 	c *Clients,
@@ -52,25 +58,25 @@ func EnsureLB(
 	svc *corev1.Service,
 	vipSubnetID string,
 	provider string,
-) (*loadbalancers.LoadBalancer, error) {
+) (lb *loadbalancers.LoadBalancer, pending bool, err error) {
 	name := ServiceLBName(tenant, svc.Namespace, svc.Name)
 
 	existing, err := findLBByName(ctx, c, name)
 	if err != nil {
-		return nil, errors.Wrap(err, "looking up existing LB")
+		return nil, false, errors.Wrap(err, "looking up existing LB")
 	}
 
 	if existing != nil {
-		if existing.ProvisioningStatus == "ACTIVE" {
-			return existing, nil
+		switch existing.ProvisioningStatus {
+		case statusActive:
+			return existing, false, nil
+		case statusError:
+			return nil, false, errors.Newf("LB %s is in provisioning_status=ERROR (operating_status=%s)", existing.ID, existing.OperatingStatus)
+		default:
+			// PENDING_* — yield the worker; next reconcile will pick
+			// it up when the LB settles.
+			return existing, true, nil
 		}
-
-		settled, err := waitForLBActive(ctx, c, existing.ID)
-		if err != nil {
-			return nil, errors.Wrapf(err, "waiting for existing LB %s to settle", existing.ID)
-		}
-
-		return settled, nil
 	}
 
 	if provider == "" {
@@ -84,85 +90,95 @@ func EnsureLB(
 		VipSubnetID: vipSubnetID,
 	}).Extract()
 	if err != nil {
-		return nil, errors.Wrap(err, "creating Octavia LB")
+		return nil, false, errors.Wrap(err, "creating Octavia LB")
 	}
 
-	settled, err := waitForLBActive(ctx, c, created.ID)
-	if err != nil {
-		return nil, errors.Wrapf(err, "waiting for new LB %s to become ACTIVE", created.ID)
-	}
-
-	return settled, nil
+	// Newly created LBs are PENDING_CREATE; force a requeue.
+	return created, true, nil
 }
 
 // DeleteLB cascade-deletes the LB (drops listeners, pools, members in
-// one call) if it exists and is managed by us. Returns nil when the LB
-// is already gone — idempotent for repeated reconciles.
-func DeleteLB(ctx context.Context, c *Clients, tenant string, svc *corev1.Service) error {
+// one call) if it exists and is managed by us. Returns pending=true
+// when the LB exists but is mid-delete (PENDING_DELETE) or when we
+// just initiated the delete. Returns pending=false and no error when
+// the LB is already gone — idempotent for repeated reconciles.
+func DeleteLB(ctx context.Context, c *Clients, tenant string, svc *corev1.Service) (pending bool, err error) {
 	name := ServiceLBName(tenant, svc.Namespace, svc.Name)
 
 	existing, err := findLBByName(ctx, c, name)
 	if err != nil {
-		return errors.Wrap(err, "looking up LB for delete")
+		return false, errors.Wrap(err, "looking up LB for delete")
 	}
 
 	if existing == nil {
-		return nil
+		return false, nil
 	}
 
 	if !IsManaged(existing) {
-		return errors.Newf("refusing to delete LB %s: name does not carry the cozystack: prefix", existing.ID)
+		return false, errors.Newf("refusing to delete LB %s: name does not carry the %s prefix", existing.ID, managedNamePrefix)
+	}
+
+	if existing.ProvisioningStatus == statusPendingDelete {
+		return true, nil
 	}
 
 	err = loadbalancers.Delete(ctx, c.LoadBalancer, existing.ID, loadbalancers.DeleteOpts{Cascade: true}).ExtractErr()
 	if err != nil {
-		return errors.Wrapf(err, "deleting LB %s", existing.ID)
+		return false, errors.Wrapf(err, "deleting LB %s", existing.ID)
 	}
 
-	return nil
+	return true, nil
 }
 
 // SyncListenersAndMembers reconciles the listener/pool/member set on
 // the LB to match the Service's ports and the tenant's worker node
-// IPs. v1 implements the minimal happy-path:
+// IPs. The reconcile is single-step per call: at most one mutation is
+// performed, and if anything was changed we return pending=true so the
+// caller requeues. This avoids the 409 cascade that occurs when
+// chained mutations hit Octavia while the LB is still PENDING_UPDATE.
+//
+// Layout:
 //
 //   - one listener per Service.spec.ports[] (protocol must be TCP/UDP/SCTP;
-//     OVN rejects HTTP/HTTPS so we filter)
+//     OVN rejects HTTP/HTTPS so we error out cleanly)
 //   - one pool per listener, algorithm SOURCE_IP_PORT (the only one OVN
-//     supports), no health monitor (KUBE-proxy NodePort handles
-//     liveness from inside the cluster; HTTP monitors are unsupported
-//     by OVN anyway)
-//   - members = (nodeIP, port.NodePort) for every healthy worker
+//     supports), no health monitor (kube-proxy NodePort handles
+//     liveness from inside the cluster)
+//   - members = (nodeIP, port.NodePort) for every Ready worker, set as
+//     a single declarative batch via BatchUpdateMembers
 //
-// memberIPs is the caller-resolved list of tenant Node InternalIPs.
+// memberIPs may be empty; that flushes the pool of stale members
+// rather than skipping the sync.
 func SyncListenersAndMembers(
 	ctx context.Context,
 	c *Clients,
 	lb *loadbalancers.LoadBalancer,
 	svc *corev1.Service,
 	memberIPs []string,
-) error {
+) (pending bool, err error) {
+	if lb.ProvisioningStatus != statusActive {
+		// Don't try to mutate while Octavia is still settling.
+		return true, nil
+	}
+
 	desiredPorts := make([]corev1.ServicePort, 0, len(svc.Spec.Ports))
 
 	for _, p := range svc.Spec.Ports {
-		// OVN driver only supports TCP/UDP/SCTP listeners. Filter the
-		// rest at this layer so we surface a clean error instead of a
-		// cryptic OpenStack 400.
 		switch p.Protocol {
 		case corev1.ProtocolTCP, corev1.ProtocolUDP, corev1.ProtocolSCTP:
 			desiredPorts = append(desiredPorts, p)
 		default:
-			return errors.Newf("port %d has unsupported protocol %q (OVN listener requires TCP/UDP/SCTP)", p.Port, p.Protocol)
+			return false, errors.Newf("port %d has unsupported protocol %q (OVN listener requires TCP/UDP/SCTP)", p.Port, p.Protocol)
 		}
 
 		if p.NodePort == 0 {
-			return errors.Newf("port %d has no nodePort allocated; ensure Service.spec.type=LoadBalancer triggered kube-apiserver to assign one", p.Port)
+			return false, errors.Newf("port %d has no nodePort allocated; ensure Service.spec.type=LoadBalancer triggered kube-apiserver to assign one", p.Port)
 		}
 	}
 
 	existing, err := listListenersForLB(ctx, c, lb.ID)
 	if err != nil {
-		return errors.Wrap(err, "listing existing listeners")
+		return false, errors.Wrap(err, "listing existing listeners")
 	}
 
 	byName := make(map[string]*listeners.Listener, len(existing))
@@ -178,31 +194,30 @@ func SyncListenersAndMembers(
 
 		listener, exists := byName[listenerName]
 		if !exists {
-			listener, err = createListener(ctx, c, lb.ID, listenerName, p)
-			if err != nil {
-				return errors.Wrapf(err, "creating listener %s", listenerName)
+			if _, err := createListener(ctx, c, lb.ID, listenerName, p); err != nil {
+				return false, errors.Wrapf(err, "creating listener %s", listenerName)
 			}
+
+			// Mutation initiated; LB now in PENDING_UPDATE. Yield.
+			return true, nil
 		}
 
-		if _, err := waitForLBActive(ctx, c, lb.ID); err != nil {
-			return errors.Wrapf(err, "waiting for LB %s after listener %s", lb.ID, listenerName)
-		}
-
-		pool, err := ensurePool(ctx, c, lb.ID, listener.ID, p)
+		pool, created, err := ensurePool(ctx, c, lb.ID, listener.ID, p)
 		if err != nil {
-			return errors.Wrapf(err, "ensuring pool for listener %s", listenerName)
+			return false, errors.Wrapf(err, "ensuring pool for listener %s", listenerName)
 		}
 
-		if _, err := waitForLBActive(ctx, c, lb.ID); err != nil {
-			return errors.Wrapf(err, "waiting for LB %s after pool for %s", lb.ID, listenerName)
+		if created {
+			return true, nil
 		}
 
-		if err := syncMembers(ctx, c, pool.ID, p.NodePort, memberIPs, lb.VipSubnetID); err != nil {
-			return errors.Wrapf(err, "syncing members for pool %s", pool.ID)
+		changed, err := syncMembers(ctx, c, pool.ID, p.NodePort, memberIPs, lb.VipSubnetID)
+		if err != nil {
+			return false, errors.Wrapf(err, "syncing members for pool %s", pool.ID)
 		}
 
-		if _, err := waitForLBActive(ctx, c, lb.ID); err != nil {
-			return errors.Wrapf(err, "waiting for LB %s after member sync for %s", lb.ID, listenerName)
+		if changed {
+			return true, nil
 		}
 	}
 
@@ -212,26 +227,18 @@ func SyncListenersAndMembers(
 		}
 
 		// Listener no longer in the Service spec — drop it. Octavia
-		// cascade also drops its pool + members, so a single delete is
-		// enough.
+		// cascade also drops its pool + members.
 		if err := listeners.Delete(ctx, c.LoadBalancer, listener.ID).ExtractErr(); err != nil {
-			return errors.Wrapf(err, "deleting stale listener %s", listener.ID)
+			return false, errors.Wrapf(err, "deleting stale listener %s", listener.ID)
 		}
 
-		if _, err := waitForLBActive(ctx, c, lb.ID); err != nil {
-			return errors.Wrapf(err, "waiting for LB %s after deleting %s", lb.ID, listener.ID)
-		}
+		return true, nil
 	}
 
-	return nil
+	return false, nil
 }
 
 // ---- helpers below ----
-
-const (
-	lbActiveTimeout = 2 * time.Minute
-	lbPollInterval  = 3 * time.Second
-)
 
 func findLBByName(ctx context.Context, c *Clients, name string) (*loadbalancers.LoadBalancer, error) {
 	pager := loadbalancers.List(c.LoadBalancer, loadbalancers.ListOpts{Name: name})
@@ -256,38 +263,10 @@ func findLBByName(ctx context.Context, c *Clients, name string) (*loadbalancers.
 		return true, nil
 	})
 	if err != nil {
-		return nil, err //nolint:wrapcheck // surfaces gophercloud error to caller; wrapped one level up
+		return nil, err //nolint:wrapcheck
 	}
 
 	return found, nil
-}
-
-func waitForLBActive(ctx context.Context, c *Clients, lbID string) (*loadbalancers.LoadBalancer, error) {
-	deadline := time.Now().Add(lbActiveTimeout)
-
-	for {
-		lb, err := loadbalancers.Get(ctx, c.LoadBalancer, lbID).Extract()
-		if err != nil {
-			return nil, errors.Wrapf(err, "polling LB %s", lbID)
-		}
-
-		switch lb.ProvisioningStatus {
-		case "ACTIVE":
-			return lb, nil
-		case "ERROR":
-			return nil, errors.Newf("LB %s entered provisioning_status=ERROR (operating_status=%s)", lbID, lb.OperatingStatus)
-		}
-
-		if time.Now().After(deadline) {
-			return nil, errors.Newf("LB %s did not reach ACTIVE within %s (last status=%s)", lbID, lbActiveTimeout, lb.ProvisioningStatus)
-		}
-
-		select {
-		case <-ctx.Done():
-			return nil, errors.Wrap(ctx.Err(), "context cancelled while waiting for LB")
-		case <-time.After(lbPollInterval):
-		}
-	}
 }
 
 func listListenersForLB(ctx context.Context, c *Clients, lbID string) ([]listeners.Listener, error) {
@@ -313,33 +292,36 @@ func createListener(ctx context.Context, c *Clients, lbID, name string, port cor
 	return listeners.Create(ctx, c.LoadBalancer, listeners.CreateOpts{ //nolint:wrapcheck
 		Name:           name,
 		LoadbalancerID: lbID,
-		Protocol:       listeners.Protocol(string(port.Protocol)), // TCP/UDP/SCTP
+		Protocol:       listeners.Protocol(string(port.Protocol)),
 		ProtocolPort:   int(port.Port),
 	}).Extract()
 }
 
-func ensurePool(ctx context.Context, c *Clients, lbID, listenerID string, port corev1.ServicePort) (*pools.Pool, error) {
+// ensurePool returns the pool bound to the given listener. created is
+// true when this call performed the create — caller should requeue to
+// let the LB return to ACTIVE before further mutations.
+func ensurePool(ctx context.Context, c *Clients, lbID, listenerID string, port corev1.ServicePort) (p *pools.Pool, created bool, err error) {
 	existing, err := findPoolForListener(ctx, c, lbID, listenerID)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 
 	if existing != nil {
-		return existing, nil
+		return existing, false, nil
 	}
 
-	created, err := pools.Create(ctx, c.LoadBalancer, pools.CreateOpts{
+	out, err := pools.Create(ctx, c.LoadBalancer, pools.CreateOpts{
 		Name:        fmt.Sprintf("pool-%s", listenerID),
-		LBMethod:    pools.LBMethodSourceIpPort, // OVN-only choice
+		LBMethod:    pools.LBMethodSourceIpPort,
 		Protocol:    pools.Protocol(string(port.Protocol)),
 		ListenerID:  listenerID,
 		Description: "Managed by Cozystack loadbalancer-controller",
 	}).Extract()
 	if err != nil {
-		return nil, errors.Wrap(err, "creating pool")
+		return nil, false, errors.Wrap(err, "creating pool")
 	}
 
-	return created, nil
+	return out, true, nil
 }
 
 // findPoolForListener filters server-side by LoadBalancer (pools.ListOpts
@@ -375,49 +357,67 @@ func findPoolForListener(ctx context.Context, c *Clients, lbID, listenerID strin
 	return found, nil
 }
 
-func syncMembers(ctx context.Context, c *Clients, poolID string, nodePort int32, memberIPs []string, subnetID string) error {
+// syncMembers reconciles the pool's members to match memberIPs. Uses
+// Octavia's BatchUpdateMembers (declarative pool-member API): a single
+// atomic call replaces the entire member set, so there is no
+// PENDING_UPDATE cascade between member additions and deletions and
+// therefore no 409 race. Returns changed=true when the call was
+// actually issued (i.e. there was a diff); callers should then
+// requeue and let the LB return to ACTIVE.
+func syncMembers(ctx context.Context, c *Clients, poolID string, nodePort int32, memberIPs []string, subnetID string) (changed bool, err error) {
 	existing, err := listMembers(ctx, c, poolID)
 	if err != nil {
-		return errors.Wrap(err, "listing pool members")
+		return false, errors.Wrap(err, "listing pool members")
 	}
 
-	want := make(map[string]struct{}, len(memberIPs))
+	desired := make(map[string]struct{}, len(memberIPs))
 	for _, ip := range memberIPs {
-		want[ip] = struct{}{}
+		desired[ip] = struct{}{}
 	}
 
-	have := make(map[string]string, len(existing)) // ip -> member id
+	currentByIP := make(map[string]pools.Member, len(existing))
 	for _, m := range existing {
-		have[m.Address] = m.ID
+		currentByIP[m.Address] = m
 	}
 
-	for ip := range want {
-		if _, exists := have[ip]; exists {
-			continue
-		}
+	// Detect drift: any new IP, any removed IP, or any port mismatch
+	// counts as a change. If nothing's different, skip the API call
+	// to avoid pointless PENDING_UPDATE churn.
+	drift := len(currentByIP) != len(desired)
 
-		_, err := pools.CreateMember(ctx, c.LoadBalancer, poolID, pools.CreateMemberOpts{
-			Name:         fmt.Sprintf("worker-%s", strings.ReplaceAll(ip, ".", "-")),
+	if !drift {
+		for ip := range desired {
+			cur, ok := currentByIP[ip]
+			if !ok || cur.ProtocolPort != int(nodePort) || cur.SubnetID != subnetID {
+				drift = true
+
+				break
+			}
+		}
+	}
+
+	if !drift {
+		return false, nil
+	}
+
+	opts := make([]pools.BatchUpdateMemberOpts, 0, len(memberIPs))
+
+	for _, ip := range memberIPs {
+		memberName := fmt.Sprintf("worker-%s", strings.ReplaceAll(ip, ".", "-"))
+		subnet := subnetID
+		opts = append(opts, pools.BatchUpdateMemberOpts{
+			Name:         &memberName,
 			Address:      ip,
 			ProtocolPort: int(nodePort),
-			SubnetID:     subnetID,
-		}).Extract()
-		if err != nil {
-			return errors.Wrapf(err, "adding pool member %s:%d", ip, nodePort)
-		}
+			SubnetID:     &subnet,
+		})
 	}
 
-	for ip, id := range have {
-		if _, ok := want[ip]; ok {
-			continue
-		}
-
-		if err := pools.DeleteMember(ctx, c.LoadBalancer, poolID, id).ExtractErr(); err != nil {
-			return errors.Wrapf(err, "removing pool member %s (%s)", ip, id)
-		}
+	if err := pools.BatchUpdateMembers(ctx, c.LoadBalancer, poolID, opts).ExtractErr(); err != nil {
+		return false, errors.Wrapf(err, "batch-updating pool %s members", poolID)
 	}
 
-	return nil
+	return true, nil
 }
 
 func listMembers(ctx context.Context, c *Clients, poolID string) ([]pools.Member, error) {
