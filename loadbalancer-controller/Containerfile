@@ -1,0 +1,35 @@
+# syntax=docker/dockerfile:1.7
+
+# ---------- builder ----------
+FROM --platform=$BUILDPLATFORM golang:1.23-alpine AS builder
+
+WORKDIR /src
+
+# Cached module download layer.
+COPY go.mod go.sum* ./
+RUN --mount=type=cache,target=/root/.cache/go-build \
+    --mount=type=cache,target=/go/pkg/mod \
+    go mod download
+
+COPY cmd/ ./cmd/
+COPY internal/ ./internal/
+
+ARG TARGETOS
+ARG TARGETARCH
+ARG VERSION=dev
+ARG REVISION=unknown
+
+RUN --mount=type=cache,target=/root/.cache/go-build \
+    --mount=type=cache,target=/go/pkg/mod \
+    CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
+    go build -trimpath \
+      -ldflags "-s -w -X main.version=$VERSION -X main.revision=$REVISION" \
+      -o /out/loadbalancer-controller ./cmd
+
+# ---------- runtime ----------
+FROM gcr.io/distroless/static:nonroot
+
+COPY --from=builder /out/loadbalancer-controller /usr/local/bin/loadbalancer-controller
+
+USER 65532:65532
+ENTRYPOINT ["/usr/local/bin/loadbalancer-controller"]

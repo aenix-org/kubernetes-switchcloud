@@ -1,0 +1,51 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "loadbalancer-controller.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "loadbalancer-controller.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "loadbalancer-controller.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "loadbalancer-controller.selectorLabels" . | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "loadbalancer-controller.serviceAccountName" . }}
+      securityContext:
+        runAsNonRoot: true
+      containers:
+      - name: controller
+        image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        args:
+        - --metrics-bind-address={{ .Values.probes.metricsAddr }}
+        - --health-probe-bind-address={{ .Values.probes.probeAddr }}
+        - --leader-elect={{ .Values.leaderElection.enabled }}
+        - --zap-log-level={{ .Values.log.level }}
+        - --zap-encoder={{ .Values.log.encoding }}
+        ports:
+        - name: metrics
+          containerPort: {{ trimPrefix ":" .Values.probes.metricsAddr | atoi }}
+          protocol: TCP
+        - name: probe
+          containerPort: {{ trimPrefix ":" .Values.probes.probeAddr | atoi }}
+          protocol: TCP
+        readinessProbe:
+          httpGet:
+            path: /readyz
+            port: probe
+          periodSeconds: 10
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: probe
+          periodSeconds: 20
+        resources:
+          {{- toYaml .Values.resources | nindent 10 }}
+        securityContext:
+          {{- toYaml .Values.securityContext | nindent 10 }}

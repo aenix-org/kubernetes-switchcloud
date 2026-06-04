@@ -1,0 +1,57 @@
+image:
+  repository: ghcr.io/aenix-org/loadbalancer-controller
+  ## @param image.tag default "" → use .Chart.AppVersion
+  tag: ""
+  pullPolicy: IfNotPresent
+
+replicaCount: 1
+
+## @section RBAC
+## The controller needs to read Secrets named
+## kubernetes-switchcloud-<tenant>-admin-kubeconfig in tenant-root to
+## discover tenants and dial their apiservers. It does NOT need any
+## cluster-scoped permissions in the management cluster — RBAC inside
+## each tenant cluster is governed by the kubeconfig credentials, not
+## by anything declared here.
+rbac:
+  create: true
+
+serviceAccount:
+  create: true
+  ## @param serviceAccount.name override; empty defaults to the chart's release name
+  name: ""
+
+## @section Resources
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    memory: 256Mi
+
+## @section Probes
+probes:
+  ## @param probes.metricsAddr host:port for the /metrics endpoint
+  metricsAddr: ":8080"
+  ## @param probes.probeAddr host:port for /healthz and /readyz
+  probeAddr: ":8081"
+
+leaderElection:
+  enabled: true
+
+## @section Logging
+log:
+  ## @param log.level zap level; one of debug | info | warn | error
+  level: info
+  ## @param log.encoding zap encoding; one of console | json
+  encoding: json
+
+securityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop: [ALL]
+  seccompProfile:
+    type: RuntimeDefault

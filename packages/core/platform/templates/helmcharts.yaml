@@ -50,3 +50,17 @@ spec:
     name: kubernetes-switchcloud
     namespace: cozy-public
   interval: 5m
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmChart
+metadata:
+  name: kubernetes-switchcloud-loadbalancer-controller
+  namespace: cozy-public
+spec:
+  chart: loadbalancer-controller
+  version: "0.x"
+  sourceRef:
+    kind: HelmRepository
+    name: kubernetes-switchcloud
+    namespace: cozy-public
+  interval: 5m
