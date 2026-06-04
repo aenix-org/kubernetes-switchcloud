@@ -43,6 +43,15 @@ type LoadBalancerConfig struct {
 	FloatingNetworkID string
 	FloatingSubnetID  string
 	Creds             openstack.Credentials
+
+	// MisconfiguredReason is set when the CR opts into the feature
+	// (loadBalancer.enabled=true) but a required field is missing.
+	// In that case Enabled is forced back to false so the reconciler
+	// short-circuits cleanly; the controller logs the reason once
+	// when it observes a Service that would otherwise be managed,
+	// instead of erroring (and re-erroring) on every reconcile of
+	// every Service in the tenant.
+	MisconfiguredReason string
 }
 
 var kscGVR = schema.GroupVersionResource{
@@ -85,8 +94,16 @@ func Resolve(ctx context.Context, mgmtClient ctrlclient.Client, tenant string) (
 
 	vipNetID, _, _ := unstructured.NestedString(ksc.Object, "spec", "openstack", "loadBalancer", "vipNetworkID")
 	if vipNetID == "" {
-		return nil, errors.Newf("spec.openstack.loadBalancer.vipNetworkID is required on tenant %q when loadBalancer is enabled; "+
-			"set it to a tenant-owned Neutron network ID (typically the same as spec.openstack.network.id)", tenant)
+		// Soft failure: surface the misconfiguration to the
+		// reconciler via MisconfiguredReason and treat the feature
+		// as disabled. Avoids an error-and-retry storm on every
+		// Service in the tenant when an operator forgets to set
+		// the field.
+		cfg.Enabled = false
+		cfg.MisconfiguredReason = "spec.openstack.loadBalancer.vipNetworkID is required when loadBalancer.enabled=true " +
+			"(set it to a tenant-owned Neutron network ID, typically the same as spec.openstack.network.id)"
+
+		return cfg, nil
 	}
 
 	cfg.VIPNetworkID = vipNetID
