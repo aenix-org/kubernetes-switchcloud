@@ -101,8 +101,9 @@ func run() error {
 	}
 
 	r := &controller.ServiceReconciler{
-		Registry: registry,
-		Log:      slogger,
+		Registry:   registry,
+		MgmtClient: mgr.GetClient(),
+		Log:        slogger,
 	}
 
 	if err := r.SetupWithManager(mgr); err != nil {
