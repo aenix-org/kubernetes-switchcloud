@@ -58,7 +58,14 @@ metadata:
   namespace: cozy-public
 spec:
   chart: loadbalancer-controller
-  version: "0.x"
+  # Pinned to 0.8.x: CI publishes the controller image at the
+  # git-tag value (e.g. v0.9.0 -> ghcr.io/aenix-org/loadbalancer-controller:0.9.0),
+  # and Helm charts share the same OCI repo path. An unconstrained
+  # `0.x` would pick the highest semver in the namespace, which can
+  # be a container-image tag (not a chart) and fail on mediatype.
+  # Keep this in sync with charts/loadbalancer-controller/Chart.yaml
+  # `version`.
+  version: "0.8.x"
   sourceRef:
     kind: HelmRepository
     name: kubernetes-switchcloud
