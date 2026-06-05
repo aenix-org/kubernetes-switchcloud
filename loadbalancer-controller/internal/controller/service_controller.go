@@ -234,15 +234,25 @@ func (r *tenantServiceReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		publicAddr = fipAddr
 	}
 
-	if cfg.WorkerSecurityGroupID != "" {
-		if err := openstack.EnsureNodePortRules(ctx, clients, cfg.WorkerSecurityGroupID, r.tenant, svc, cfg.AllowedCIDRs); err != nil {
-			return ctrl.Result{}, errors.Wrap(err, "ensuring nodePort SG rules")
+	// Resolve which SG carries the NodePort rules. Operator override
+	// via cfg.WorkerSecurityGroupID wins; otherwise the controller
+	// auto-creates a per-cluster SG (cozystack-lb-<cluster>) with the
+	// intra-SG baseline rules in place. Distinct SGs across clusters
+	// give us L4 isolation by default — co-tenant clusters share the
+	// project but not the SG, so allow-from-same-SG never crosses
+	// cluster boundaries.
+	workerSGID := cfg.WorkerSecurityGroupID
+	if workerSGID == "" {
+		sgID, err := openstack.EnsureClusterSecurityGroup(ctx, clients, r.tenant)
+		if err != nil {
+			return ctrl.Result{}, errors.Wrap(err, "ensuring cluster security group")
 		}
-	} else {
-		r.log.Info("workerSecurityGroupID not set; controller will not manage NodePort SG rules — external traffic may be dropped at the worker port unless an operator-managed rule already permits the NodePort",
-			"namespace", svc.Namespace,
-			"name", svc.Name,
-		)
+
+		workerSGID = sgID
+	}
+
+	if err := openstack.EnsureNodePortRules(ctx, clients, workerSGID, r.tenant, svc, cfg.AllowedCIDRs); err != nil {
+		return ctrl.Result{}, errors.Wrap(err, "ensuring nodePort SG rules")
 	}
 
 	if err := r.patchStatus(ctx, svc, publicAddr); err != nil {
@@ -277,10 +287,19 @@ func (r *tenantServiceReconciler) cleanup(ctx context.Context, svc *corev1.Servi
 			return ctrl.Result{}, errors.Wrap(err, "building OpenStack clients for cleanup")
 		}
 
-		// Drop NodePort SG rules first — they are cheap to delete
-		// and harmless to leave behind, but tidier this way.
-		if cfg.WorkerSecurityGroupID != "" {
-			if err := openstack.DeleteNodePortRules(ctx, clients, cfg.WorkerSecurityGroupID, r.tenant, svc); err != nil {
+		// Drop NodePort SG rules first — they are cheap to delete and
+		// harmless to leave behind, but tidier this way. The SG to
+		// touch follows the same resolution rule as the create path:
+		// operator override if present, otherwise the controller's
+		// per-cluster SG (looked up by deterministic name; do NOT
+		// auto-create on cleanup).
+		cleanupSGID, err := r.resolveCleanupSGID(ctx, clients, cfg)
+		if err != nil {
+			return ctrl.Result{}, errors.Wrap(err, "resolving cleanup SG")
+		}
+
+		if cleanupSGID != "" {
+			if err := openstack.DeleteNodePortRules(ctx, clients, cleanupSGID, r.tenant, svc); err != nil {
 				return ctrl.Result{}, errors.Wrap(err, "deleting nodePort SG rules")
 			}
 		}
@@ -298,6 +317,23 @@ func (r *tenantServiceReconciler) cleanup(ctx context.Context, svc *corev1.Servi
 	}
 
 	return r.dropFinalizer(ctx, svc)
+}
+
+// resolveCleanupSGID returns the SG ID rules should be removed from
+// during cleanup. Mirrors the create-path resolution but never
+// creates: a missing controller-managed SG means there are no rules
+// to clean up. Operator override always wins.
+func (r *tenantServiceReconciler) resolveCleanupSGID(ctx context.Context, clients *openstack.Clients, cfg *ksc.LoadBalancerConfig) (string, error) {
+	if cfg.WorkerSecurityGroupID != "" {
+		return cfg.WorkerSecurityGroupID, nil
+	}
+
+	sg, err := openstack.LookupClusterSecurityGroup(ctx, clients, r.tenant)
+	if err != nil {
+		return "", err
+	}
+
+	return sg, nil
 }
 
 func (r *tenantServiceReconciler) dropFinalizer(ctx context.Context, svc *corev1.Service) (ctrl.Result, error) {
