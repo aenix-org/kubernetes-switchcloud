@@ -180,6 +180,35 @@ func (r *tenantServiceReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		return ctrl.Result{}, errors.Wrap(err, "resolving KubernetesSwitchcloud config")
 	}
 
+	// HR-delete guard. When the tenant's HelmRelease in the management
+	// cluster has been marked for deletion, the cluster controller is
+	// already running SweepClusterResources and is the source of truth
+	// for OpenStack-side cleanup of this tenant. If we let the service
+	// controller continue past this point, two reconciles ran in
+	// parallel — the cluster sweep deleted the cluster SG + cluster-scoped
+	// resources, and then a per-Service Reconcile re-created an LB+FIP
+	// that the now-orphan SG couldn't anchor — leaving stranded FIPs
+	// in OpenStack that only orphan-sweeper would eventually mop up.
+	//
+	// Drop our finalizer here so the Service can finish its own
+	// deletion when the tenant cluster goes away, but do not run
+	// per-Service cleanup or create-path: the cluster sweep covers
+	// both, and racing it produces exactly the resource-recreation
+	// loop above.
+	hrDeleting, err := r.isHelmReleaseDeleting(ctx)
+	if err != nil {
+		return ctrl.Result{}, errors.Wrap(err, "checking HelmRelease delete state")
+	}
+
+	if hrDeleting {
+		r.log.V(1).Info("HelmRelease is terminating; deferring to cluster-level sweep",
+			"namespace", svc.Namespace,
+			"name", svc.Name,
+		)
+
+		return r.dropFinalizer(ctx, svc)
+	}
+
 	// Deletion + type-change cleanup both flow through here. The
 	// finalizer is the contract that lets us hold the Service object
 	// open long enough to delete the matching Octavia LB.
@@ -458,6 +487,33 @@ func (r *tenantServiceReconciler) dropFinalizer(ctx context.Context, svc *corev1
 	)
 
 	return ctrl.Result{}, nil
+}
+
+// isHelmReleaseDeleting reports whether the tenant's HelmRelease in
+// the management cluster is in its terminating phase. We look up the
+// HR by deterministic name `kubernetes-switchcloud-<tenant>` rather
+// than by label so the lookup is cheap (no list, no informer scan)
+// and reuses the management-cluster cache that the controller already
+// has. A missing HR returns true as well: the tenant cluster is on
+// its way out one way or another, and producing fresh OpenStack
+// resources for it would be guaranteed orphan-making.
+func (r *tenantServiceReconciler) isHelmReleaseDeleting(ctx context.Context) (bool, error) {
+	hr := &unstructured.Unstructured{}
+	hr.SetGroupVersionKind(helmReleaseGVK)
+
+	err := r.mgmtClient.Get(ctx, types.NamespacedName{
+		Namespace: ksc.TenantNamespace,
+		Name:      "kubernetes-switchcloud-" + r.tenant,
+	}, hr)
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			return true, nil
+		}
+
+		return false, errors.Wrap(err, "fetching HelmRelease")
+	}
+
+	return hr.GetDeletionTimestamp() != nil, nil
 }
 
 // tenantNodeIPs returns the InternalIPs of every Ready tenant Node.
