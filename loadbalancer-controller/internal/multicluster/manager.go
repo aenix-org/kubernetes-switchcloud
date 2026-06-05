@@ -416,6 +416,16 @@ func (m *Manager) Tenants() []string {
 // tenant" rather than "Service is gone, delete": deleting LBs for
 // a tenant whose Session is briefly absent (mid-restart, transient
 // apiserver blip) would be a real outage.
+//
+// Lifetime note: the returned client may transition to a stopped
+// state between the lookup here and a subsequent Get if Session.Stop
+// fires (kubeconfig rotation, tenant delete, leader loss). The
+// stopped client surfaces a context-cancelled / cache-not-started
+// error on Get, which the orphan-sweeper callback maps to
+// "inconclusive — cache as exists", absorbing the race into the
+// bias-towards-safe policy. Other callers that need stronger
+// guarantees should re-lookup after each failure rather than hold
+// the returned client across a long-running call chain.
 func (m *Manager) TenantClient(tenant string) (ctrlclient.Client, bool) {
 	m.sessionsMu.Lock()
 	defer m.sessionsMu.Unlock()

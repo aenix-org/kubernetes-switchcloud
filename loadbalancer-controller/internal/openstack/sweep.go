@@ -231,6 +231,14 @@ func SweepOrphans(ctx context.Context, c *Clients, knownClusters map[string]stru
 	// DeleteLB(svc) call because the tenant Service object is precisely
 	// the thing that does NOT exist — synthesising a fake corev1.Service
 	// just to thread the same call would be the wrong shape.
+	//
+	// Note: Octavia's Cascade:true purges the LB's pool, members and
+	// listeners but does NOT reach Neutron FloatingIPs (Octavia and
+	// Neutron own their resources independently). The attached FIP
+	// becomes stranded and is picked up by sweepOrphanFloatingIPs
+	// below in the same pass, keyed on the same Service tag — the
+	// shared serviceExistsSeen cache means the tenant apiserver sees
+	// exactly one Get per (cluster, namespace, name) across both passes.
 	for _, lb := range orphanServiceLBs {
 		if err := loadbalancers.Delete(ctx, c.LoadBalancer, lb.ID, loadbalancers.DeleteOpts{Cascade: true}).ExtractErr(); err != nil {
 			if !isConflictError(err) {
