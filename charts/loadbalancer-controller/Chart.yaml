@@ -8,8 +8,8 @@ description: |
   users get LoadBalancer Services without ever handling OpenStack
   credentials themselves.
 type: application
-version: 0.8.5
-appVersion: "0.9.5"
+version: 0.8.6
+appVersion: "0.9.6"
 maintainers:
   - name: Aenix
     email: support@aenix.io
