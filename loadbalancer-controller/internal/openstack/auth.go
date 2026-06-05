@@ -82,16 +82,25 @@ func NewClients(ctx context.Context, creds Credentials) (*Clients, error) {
 		return nil, errors.Wrap(err, "building Neutron v2 client")
 	}
 
-	computev2, err := osclient.NewComputeV2(provider, eo)
-	if err != nil {
-		return nil, errors.Wrap(err, "building Nova compute v2 client")
-	}
+	// Nova client failure is non-fatal: the controller's primary
+	// duties (LB / SG reconcile) only need Octavia + Neutron. Compute
+	// is consumed solely by the orphan-Nova-server sweep, which is
+	// already a best-effort safety net. If a project's service
+	// catalog doesn't expose Nova (locked-down tenancy, transient
+	// outage in keystone), we leave Compute=nil and have callers
+	// no-op rather than break the LB path for every Service.
+	computev2, computeErr := osclient.NewComputeV2(provider, eo)
 
-	return &Clients{
+	out := &Clients{
 		Provider:     provider,
 		LoadBalancer: lbv2,
 		Network:      netv2,
-		Compute:      computev2,
 		Region:       creds.RegionName,
-	}, nil
+	}
+
+	if computeErr == nil {
+		out.Compute = computev2
+	}
+
+	return out, nil
 }

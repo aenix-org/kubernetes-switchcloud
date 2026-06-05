@@ -146,7 +146,7 @@ func run() error {
 	// happened to be down or somebody mutated state out-of-band. The
 	// CR-finalizer + per-Service finalizer are the primary cleanup
 	// paths; this is the safety net.
-	go runOrphanSweeper(ctx, mgr.GetClient(), registry, logger.WithName("sweeper"))
+	go runOrphanSweeper(ctx, mgr.GetClient(), logger.WithName("sweeper"))
 
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {
 		return errors.Wrap(err, "setting up healthz")
@@ -176,7 +176,7 @@ const sweepInterval = 10 * time.Minute
 // we currently know about. Anything whose owning cluster has gone
 // missing is torn down. Survives transient OpenStack auth failures —
 // errors are logged and the loop continues; the next tick retries.
-func runOrphanSweeper(ctx context.Context, mgmtClient ctrlclient.Client, reg *multicluster.Registry, log logr.Logger) {
+func runOrphanSweeper(ctx context.Context, mgmtClient ctrlclient.Client, log logr.Logger) {
 	t := time.NewTicker(sweepInterval)
 	defer t.Stop()
 
@@ -241,14 +241,19 @@ func runOrphanSweeper(ctx context.Context, mgmtClient ctrlclient.Client, reg *mu
 			continue
 		}
 
-		if err := openstack.SweepOrphans(ctx, clients, known); err != nil {
-			log.Error(err, "sweep cycle failed (LB/SG layer)")
+		// Nova first: workers reference the cluster SG via their
+		// ports, so the SG delete inside SweepOrphans returns 409
+		// while VMs are alive. Starting termination here gives them
+		// a head start; the SG sweep below is best-effort and the
+		// next cycle picks up whatever was still locked.
+		if err := openstack.SweepOrphanNovaServers(ctx, clients, known); err != nil {
+			log.Error(err, "sweep cycle failed (Nova layer)")
 
 			continue
 		}
 
-		if err := openstack.SweepOrphanNovaServers(ctx, clients, known); err != nil {
-			log.Error(err, "sweep cycle failed (Nova layer)")
+		if err := openstack.SweepOrphans(ctx, clients, known); err != nil {
+			log.Error(err, "sweep cycle failed (LB/SG layer)")
 
 			continue
 		}
@@ -270,6 +275,15 @@ func runOrphanSweeper(ctx context.Context, mgmtClient ctrlclient.Client, reg *mu
 // terminating state are excluded — by the time the apiserver removes
 // our finalizer the cluster's resources should already be torn down,
 // and we don't want a sweep to fight an in-flight teardown.
+//
+// Informer freshness: this reads through the manager's cache. A
+// brand-new HR may not be visible for a few hundred milliseconds
+// after cozystack-api admits it. The sweep ticks every 10 minutes,
+// so the realistic odds of catching a not-yet-cached HR are tiny;
+// the worst-case fallout (deleting a freshly-issued kubeconfig
+// Secret that Kamaji then recreates) is one paging round, not data
+// loss. The `len(known) == 0` guard above also catches the broader
+// "informer hasn't synced anything yet" failure mode.
 func listKnownClustersFromHRs(ctx context.Context, mgmtClient ctrlclient.Client) (map[string]struct{}, error) {
 	list := &unstructured.UnstructuredList{}
 	list.SetGroupVersionKind(schema.GroupVersionKind{

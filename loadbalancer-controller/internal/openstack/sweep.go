@@ -87,15 +87,30 @@ func SweepClusterResources(ctx context.Context, c *Clients, cluster string) erro
 
 	if sg != nil {
 		// Best-effort: if the SG is still pinned by a surviving port
-		// (e.g. worker that hasn't been torn down by CAPI yet)
-		// Neutron returns 409 Conflict — fine, the next sweep cycle
-		// catches it once the port is gone.
-		if err := groups.Delete(ctx, c.Network, sg.ID).ExtractErr(); err != nil {
+		// (worker that hasn't yet been torn down by CAPI, or one
+		// whose port-update to remove the SG is still in flight)
+		// Neutron returns 409 Conflict. We deliberately do NOT
+		// propagate that error — the next sweep cycle picks the SG
+		// up once references clear. Any other error is unexpected
+		// and worth surfacing.
+		err := groups.Delete(ctx, c.Network, sg.ID).ExtractErr()
+		if err != nil && !isConflictError(err) {
 			return errors.Wrapf(err, "deleting cluster SG %s", sg.ID)
 		}
 	}
 
 	return nil
+}
+
+// isConflictError reports whether err is a 409 Conflict from
+// OpenStack — gophercloud surfaces these via the v2 ErrUnexpectedResponseCode
+// helper rather than a typed error, so we string-match the status.
+func isConflictError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	return strings.Contains(err.Error(), "Bad response code: 409")
 }
 
 // SweepOrphans walks every OpenStack resource that carries the
@@ -210,7 +225,12 @@ func SweepOrphans(ctx context.Context, c *Clients, knownClusters map[string]stru
 // starts with that prefix is claimed by a known cluster and skipped.
 func SweepOrphanNovaServers(ctx context.Context, c *Clients, knownClusters map[string]struct{}) error {
 	if c.Compute == nil {
-		return errors.New("openstack.Clients.Compute is nil; cannot sweep Nova servers")
+		// Nova endpoint absent (project catalog hides compute, or
+		// build-time Nova auth failed). The sweep is a safety net,
+		// so we treat the missing client as a soft no-op — callers
+		// log the skip and the LB / SG reconcile paths remain
+		// healthy.
+		return nil
 	}
 
 	pager := servers.List(c.Compute, servers.ListOpts{})
@@ -257,6 +277,13 @@ func SweepOrphanNovaServers(ctx context.Context, c *Clients, knownClusters map[s
 // produce.
 func isClaimedByKnown(serverName string, knownClusters map[string]struct{}) bool {
 	for cluster := range knownClusters {
+		// Defensive: an empty cluster name would collapse the anchor
+		// to `kubernetes-switchcloud--`, which technically matches
+		// nothing but is fragile against future name patterns.
+		if cluster == "" {
+			continue
+		}
+
 		if strings.HasPrefix(serverName, kscServerNamePrefix+cluster+"-") {
 			return true
 		}
