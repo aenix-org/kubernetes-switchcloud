@@ -207,7 +207,18 @@ func runOrphanSweeper(ctx context.Context, mgmtClient ctrlclient.Client, reg *mu
 		}
 
 		cfg, err := ksc.Resolve(ctx, mgmtClient, anyCluster)
-		if err != nil || !cfg.Enabled {
+		if err != nil {
+			log.Error(err, "sweep: resolving KSC config for auth failed", "cluster", anyCluster)
+
+			continue
+		}
+
+		// Sweeper must run even when the picked cluster's LB feature
+		// is opted out: orphan resources we're trying to delete come
+		// from clusters that no longer exist or that previously had
+		// the feature on. All we need from the picked cluster is
+		// valid OpenStack credentials.
+		if cfg.Creds.AuthURL == "" {
 			continue
 		}
 

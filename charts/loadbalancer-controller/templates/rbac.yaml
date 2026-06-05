@@ -29,10 +29,22 @@ rules:
   verbs: [get, list, watch]
 - apiGroups: [apps.cozystack.io]
   resources: [kubernetesswitchclouds]
-  verbs: [get, list, watch, patch, update]
+  # patch/update kept for backward compatibility with earlier
+  # versions that tried to put a finalizer on the KSC CR; the
+  # current controller no longer writes to KSC at all, only reads
+  # (Resolve()) — narrow to get/list/watch in a follow-up once the
+  # field-stripping behaviour of cozystack-api is fully understood.
+  verbs: [get, list, watch]
 - apiGroups: [infrastructure.cluster.x-k8s.io]
   resources: [openstackclusters]
   verbs: [get, list, watch]
+- apiGroups: [helm.toolkit.fluxcd.io]
+  resources: [helmreleases]
+  # ClusterReconciler attaches its finalizer to the per-cluster HR
+  # cozystack-api generates from the KubernetesSwitchcloud CR.
+  # patch/update is needed to add/remove the finalizer; get/list/watch
+  # to observe lifecycle events.
+  verbs: [get, list, watch, patch, update]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
