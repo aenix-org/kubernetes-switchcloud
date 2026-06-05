@@ -26,7 +26,10 @@ metadata:
 rules:
 - apiGroups: [""]
   resources: [secrets]
-  verbs: [get, list, watch]
+  # delete kept narrow: sweeper removes orphan Kamaji-managed
+  # kubernetes-switchcloud-<cluster>-admin-kubeconfig Secrets for
+  # clusters whose HR has gone missing.
+  verbs: [get, list, watch, delete]
 - apiGroups: [apps.cozystack.io]
   resources: [kubernetesswitchclouds]
   # patch/update kept for backward compatibility with earlier

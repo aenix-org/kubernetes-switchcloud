@@ -36,6 +36,7 @@ type Clients struct {
 	Provider     *gophercloud.ProviderClient
 	LoadBalancer *gophercloud.ServiceClient
 	Network      *gophercloud.ServiceClient
+	Compute      *gophercloud.ServiceClient
 	Region       string
 }
 
@@ -81,10 +82,25 @@ func NewClients(ctx context.Context, creds Credentials) (*Clients, error) {
 		return nil, errors.Wrap(err, "building Neutron v2 client")
 	}
 
-	return &Clients{
+	// Nova client failure is non-fatal: the controller's primary
+	// duties (LB / SG reconcile) only need Octavia + Neutron. Compute
+	// is consumed solely by the orphan-Nova-server sweep, which is
+	// already a best-effort safety net. If a project's service
+	// catalog doesn't expose Nova (locked-down tenancy, transient
+	// outage in keystone), we leave Compute=nil and have callers
+	// no-op rather than break the LB path for every Service.
+	computev2, computeErr := osclient.NewComputeV2(provider, eo)
+
+	out := &Clients{
 		Provider:     provider,
 		LoadBalancer: lbv2,
 		Network:      netv2,
 		Region:       creds.RegionName,
-	}, nil
+	}
+
+	if computeErr == nil {
+		out.Compute = computev2
+	}
+
+	return out, nil
 }

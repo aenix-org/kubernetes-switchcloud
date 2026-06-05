@@ -19,11 +19,16 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/cockroachdb/errors"
 	"github.com/go-logr/logr"
+	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -141,7 +146,7 @@ func run() error {
 	// happened to be down or somebody mutated state out-of-band. The
 	// CR-finalizer + per-Service finalizer are the primary cleanup
 	// paths; this is the safety net.
-	go runOrphanSweeper(ctx, mgr.GetClient(), registry, logger.WithName("sweeper"))
+	go runOrphanSweeper(ctx, mgr.GetClient(), logger.WithName("sweeper"))
 
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {
 		return errors.Wrap(err, "setting up healthz")
@@ -171,7 +176,7 @@ const sweepInterval = 10 * time.Minute
 // we currently know about. Anything whose owning cluster has gone
 // missing is torn down. Survives transient OpenStack auth failures —
 // errors are logged and the loop continues; the next tick retries.
-func runOrphanSweeper(ctx context.Context, mgmtClient ctrlclient.Client, reg *multicluster.Registry, log logr.Logger) {
+func runOrphanSweeper(ctx context.Context, mgmtClient ctrlclient.Client, log logr.Logger) {
 	t := time.NewTicker(sweepInterval)
 	defer t.Stop()
 
@@ -182,15 +187,22 @@ func runOrphanSweeper(ctx context.Context, mgmtClient ctrlclient.Client, reg *mu
 		case <-t.C:
 		}
 
-		known := make(map[string]struct{}, len(reg.Names()))
-		for _, n := range reg.Names() {
-			known[n] = struct{}{}
+		// Source of truth for "live cluster" = the HelmRelease that
+		// cozystack-api generates from the KubernetesSwitchcloud CR.
+		// Using the kubeconfig-Secret-derived registry would be
+		// circular here: those Secrets are exactly the artifacts we
+		// want to clean up when their owning cluster is gone.
+		known, err := listKnownClustersFromHRs(ctx, mgmtClient)
+		if err != nil {
+			log.Error(err, "sweep: listing live KSC HelmReleases failed")
+
+			continue
 		}
 
 		if len(known) == 0 {
-			// Registry not yet populated (early startup) — skip a
-			// cycle rather than sweep against an empty set, which
-			// would look like every resource is orphaned.
+			// No live clusters known yet (early startup, or genuinely
+			// empty mgmt cluster) — skip rather than nuke everything
+			// that looks like it might be orphaned.
 			continue
 		}
 
@@ -229,14 +241,128 @@ func runOrphanSweeper(ctx context.Context, mgmtClient ctrlclient.Client, reg *mu
 			continue
 		}
 
+		// Nova first: workers reference the cluster SG via their
+		// ports, so the SG delete inside SweepOrphans returns 409
+		// while VMs are alive. Starting termination here gives them
+		// a head start; the SG sweep below is best-effort and the
+		// next cycle picks up whatever was still locked.
+		if err := openstack.SweepOrphanNovaServers(ctx, clients, known); err != nil {
+			log.Error(err, "sweep cycle failed (Nova layer)")
+
+			continue
+		}
+
 		if err := openstack.SweepOrphans(ctx, clients, known); err != nil {
-			log.Error(err, "sweep cycle failed")
+			log.Error(err, "sweep cycle failed (LB/SG layer)")
+
+			continue
+		}
+
+		if err := sweepOrphanKubeconfigSecrets(ctx, mgmtClient, known); err != nil {
+			log.Error(err, "sweep cycle failed (Kamaji kubeconfig secrets)")
 
 			continue
 		}
 
 		log.V(1).Info("sweep cycle complete", "knownClusters", len(known))
 	}
+}
+
+// listKnownClustersFromHRs returns the set of live cluster names by
+// listing every HelmRelease in the tenant-root namespace that
+// cozystack-api generated from a KubernetesSwitchcloud CR (label
+// apps.cozystack.io/application.kind=KubernetesSwitchcloud). HRs in
+// terminating state are excluded — by the time the apiserver removes
+// our finalizer the cluster's resources should already be torn down,
+// and we don't want a sweep to fight an in-flight teardown.
+//
+// Informer freshness: this reads through the manager's cache. A
+// brand-new HR may not be visible for a few hundred milliseconds
+// after cozystack-api admits it. The sweep ticks every 10 minutes,
+// so the realistic odds of catching a not-yet-cached HR are tiny;
+// the worst-case fallout (deleting a freshly-issued kubeconfig
+// Secret that Kamaji then recreates) is one paging round, not data
+// loss. The `len(known) == 0` guard above also catches the broader
+// "informer hasn't synced anything yet" failure mode.
+func listKnownClustersFromHRs(ctx context.Context, mgmtClient ctrlclient.Client) (map[string]struct{}, error) {
+	list := &unstructured.UnstructuredList{}
+	list.SetGroupVersionKind(schema.GroupVersionKind{
+		Group:   "helm.toolkit.fluxcd.io",
+		Version: "v2",
+		Kind:    "HelmReleaseList",
+	})
+
+	err := mgmtClient.List(ctx, list,
+		ctrlclient.InNamespace(ksc.TenantNamespace),
+		ctrlclient.MatchingLabels{"apps.cozystack.io/application.kind": "KubernetesSwitchcloud"},
+	)
+	if err != nil {
+		return nil, errors.Wrap(err, "listing KSC HelmReleases")
+	}
+
+	out := make(map[string]struct{}, len(list.Items))
+
+	for i := range list.Items {
+		if !list.Items[i].GetDeletionTimestamp().IsZero() {
+			continue
+		}
+
+		cluster := list.Items[i].GetLabels()["apps.cozystack.io/application.name"]
+		if cluster == "" {
+			continue
+		}
+
+		out[cluster] = struct{}{}
+	}
+
+	return out, nil
+}
+
+// sweepOrphanKubeconfigSecrets deletes Kamaji-managed
+// <release>-admin-kubeconfig Secrets in tenant-root for clusters
+// that are no longer in `known`. Kamaji itself is responsible for
+// cleaning these up when the TenantControlPlane is removed, but the
+// chart's uninstall flow has historically left them behind under
+// failure modes (e.g. cozystack-api stripping a finalizer before the
+// chart could cascade-delete). Targeting only the deterministic
+// naming pattern keeps us from touching unrelated Secrets.
+func sweepOrphanKubeconfigSecrets(ctx context.Context, mgmtClient ctrlclient.Client, known map[string]struct{}) error {
+	list := &corev1.SecretList{}
+
+	err := mgmtClient.List(ctx, list, ctrlclient.InNamespace(ksc.TenantNamespace))
+	if err != nil {
+		return errors.Wrap(err, "listing tenant-root secrets")
+	}
+
+	const prefix = "kubernetes-switchcloud-"
+	const suffix = "-admin-kubeconfig"
+
+	for i := range list.Items {
+		name := list.Items[i].Name
+
+		if !strings.HasPrefix(name, prefix) || !strings.HasSuffix(name, suffix) {
+			continue
+		}
+
+		cluster := strings.TrimSuffix(strings.TrimPrefix(name, prefix), suffix)
+		if cluster == "" {
+			continue
+		}
+
+		if _, alive := known[cluster]; alive {
+			continue
+		}
+
+		secret := &corev1.Secret{}
+		secret.Namespace = list.Items[i].Namespace
+		secret.Name = name
+
+		if err := mgmtClient.Delete(ctx, secret); err != nil && !apierrors.IsNotFound(err) {
+			return errors.Wrapf(err, "deleting orphan kubeconfig secret %s", name)
+		}
+	}
+
+	return nil
 }
 
 // runTenantCluster runs a single tenant's cluster.Cluster cache. Errors
