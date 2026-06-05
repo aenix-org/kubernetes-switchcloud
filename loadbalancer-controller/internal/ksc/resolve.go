@@ -97,14 +97,29 @@ func Resolve(ctx context.Context, mgmtClient ctrlclient.Client, tenant string) (
 
 	vipNetID, _, _ := unstructured.NestedString(ksc.Object, "spec", "openstack", "loadBalancer", "vipNetworkID")
 	if vipNetID == "" {
-		// Soft failure: surface the misconfiguration to the
-		// reconciler via MisconfiguredReason and treat the feature
-		// as disabled. Avoids an error-and-retry storm on every
-		// Service in the tenant when an operator forgets to set
-		// the field.
+		// Auto-discover from spec.openstack.network.id (legacy mode),
+		// or from the CAPI-managed OpenStackCluster.status when the
+		// chart is running in managedSubnets mode and CAPO has
+		// already created the network. Either falls through, the
+		// reconciler skips with a clear MisconfiguredReason until
+		// CAPO finishes provisioning.
+		legacyNetID, _, _ := unstructured.NestedString(ksc.Object, "spec", "openstack", "network", "id")
+		if legacyNetID != "" {
+			vipNetID = legacyNetID
+		} else {
+			autoID, err := autoDiscoverNetworkID(ctx, mgmtClient, tenant, ksc.GetNamespace())
+			if err != nil {
+				return nil, errors.Wrap(err, "auto-discovering CAPI-managed network ID")
+			}
+
+			vipNetID = autoID
+		}
+	}
+
+	if vipNetID == "" {
 		cfg.Enabled = false
-		cfg.MisconfiguredReason = "spec.openstack.loadBalancer.vipNetworkID is required when loadBalancer.enabled=true " +
-			"(set it to a tenant-owned Neutron network ID, typically the same as spec.openstack.network.id)"
+		cfg.MisconfiguredReason = "no worker network resolvable: set spec.openstack.loadBalancer.vipNetworkID explicitly, " +
+			"or wait for CAPO to provision the auto-managed network (OpenStackCluster.status.network.id)"
 
 		return cfg, nil
 	}
@@ -236,6 +251,44 @@ func readCloudsYAML(ctx context.Context, mgmtClient ctrlclient.Client, secretNam
 	}
 
 	return "", "", errors.Newf("clouds.yaml in Secret %s/%s has no application-credential entry", TenantNamespace, secretName)
+}
+
+// openStackClusterGVR is the CAPO OpenStackCluster CR. The
+// loadbalancer-controller reads it for one purpose only: pulling
+// the Neutron network ID CAPO provisioned in managedSubnets mode,
+// so the operator never has to copy it manually into the
+// KubernetesSwitchcloud CR.
+var openStackClusterGVR = schema.GroupVersionResource{
+	Group:    "infrastructure.cluster.x-k8s.io",
+	Version:  "v1beta1",
+	Resource: "openstackclusters",
+}
+
+// autoDiscoverNetworkID looks up the OpenStackCluster CR named after
+// the tenant and returns status.network.id (the Neutron network CAPO
+// created or attached). Returns "" without error while CAPO has not
+// populated the status yet — the caller treats that as a soft
+// misconfiguration and short-circuits the reconcile.
+func autoDiscoverNetworkID(ctx context.Context, mgmtClient ctrlclient.Client, cluster, namespace string) (string, error) {
+	osc := &unstructured.Unstructured{}
+	osc.SetGroupVersionKind(schema.GroupVersionKind{
+		Group:   openStackClusterGVR.Group,
+		Version: openStackClusterGVR.Version,
+		Kind:    "OpenStackCluster",
+	})
+
+	err := mgmtClient.Get(ctx, types.NamespacedName{Namespace: namespace, Name: cluster}, osc)
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			return "", nil
+		}
+
+		return "", errors.Wrap(err, "fetching OpenStackCluster")
+	}
+
+	id, _, _ := unstructured.NestedString(osc.Object, "status", "network", "id")
+
+	return id, nil
 }
 
 // IsNotFound returns true when err comes from a Get that hit a missing
