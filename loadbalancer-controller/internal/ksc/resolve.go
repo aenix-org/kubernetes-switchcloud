@@ -63,6 +63,20 @@ var kscGVR = schema.GroupVersionResource{
 	Resource: "kubernetesswitchclouds",
 }
 
+// GroupVersionKind returns the GVK callers need to set on an
+// unstructured.Unstructured before they can List/Get/Watch
+// KubernetesSwitchcloud objects through controller-runtime APIs
+// (e.g. when registering an Owns/Watches/source.Kind).
+// Exposed so controllers outside this package don't have to
+// hand-construct it and stay in sync if the GVR ever moves.
+func GroupVersionKind() schema.GroupVersionKind {
+	return schema.GroupVersionKind{
+		Group:   kscGVR.Group,
+		Version: kscGVR.Version,
+		Kind:    "KubernetesSwitchcloud",
+	}
+}
+
 // Resolve loads the named tenant's KubernetesSwitchcloud CR from the
 // management cluster, resolves OpenStack credentials (inline values or
 // referenced existingSecret), and returns a LoadBalancerConfig.

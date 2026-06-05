@@ -26,10 +26,12 @@ import (
 	"github.com/go-logr/logr"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	"sigs.k8s.io/controller-runtime/pkg/source"
 
 	"github.com/aenix-org/kubernetes-switchcloud/loadbalancer-controller/internal/ksc"
@@ -67,9 +69,52 @@ func (r *ServiceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			log:          r.Log.WithValues("tenant", tenant),
 		}
 
+		// KSC watch: tenants flip loadBalancer.enabled / allowedCIDRs /
+		// floatingNetworkID by patching the KSC CR in the management
+		// cluster. The tenant-side Service controller would otherwise
+		// not see those changes until the next event fires on a Service
+		// itself — meaning an operator who flipped enabled=false would
+		// leave the Octavia LB up indefinitely until they happened to
+		// touch the Service. Translate every KSC event for *this*
+		// tenant into reconcile requests for every Service in the
+		// tenant's cluster, with finalizer-carriers prioritised so the
+		// cleanup pass runs first.
+		kscObj := &unstructured.Unstructured{}
+		kscObj.SetGroupVersionKind(ksc.GroupVersionKind())
+
+		kscHandler := handler.TypedEnqueueRequestsFromMapFunc[*unstructured.Unstructured](func(ctx context.Context, obj *unstructured.Unstructured) []reconcile.Request {
+			if obj == nil || obj.GetName() != tenant {
+				return nil
+			}
+
+			var list corev1.ServiceList
+			if err := tenantReconciler.tenantClient.List(ctx, &list); err != nil {
+				tenantReconciler.log.Error(err, "listing Services on KSC change")
+
+				return nil
+			}
+
+			reqs := make([]reconcile.Request, 0, len(list.Items))
+
+			for i := range list.Items {
+				svc := &list.Items[i]
+				if svc.Spec.Type != corev1.ServiceTypeLoadBalancer && !containsString(svc.Finalizers, FinalizerName) {
+					continue
+				}
+
+				reqs = append(reqs, reconcile.Request{NamespacedName: types.NamespacedName{
+					Namespace: svc.Namespace,
+					Name:      svc.Name,
+				}})
+			}
+
+			return reqs
+		})
+
 		err := ctrl.NewControllerManagedBy(mgr).
 			Named("service-" + tenant).
 			WatchesRawSource(source.Kind(c.GetCache(), &corev1.Service{}, &handler.TypedEnqueueRequestForObject[*corev1.Service]{})).
+			WatchesRawSource(source.Kind(mgr.GetCache(), kscObj, kscHandler)).
 			Complete(tenantReconciler)
 		if err != nil {
 			return errors.Wrapf(err, "registering Service controller for tenant %q", tenant)
