@@ -96,6 +96,53 @@ func findPortByIP(ctx context.Context, c *Clients, networkID, ip string) (*ports
 	return found, nil
 }
 
+// ListWorkerIPsOnNetwork returns the fixed-IP addresses of every
+// Nova-owned port (`device_owner=compute:nova`) on the given network
+// — i.e. the OpenStack-side IPs of the workers attached to the
+// cluster's managed subnet.
+//
+// Used instead of Node.status.addresses[InternalIP] for building
+// Octavia pool members: kubelet may report a CNI/overlay address
+// (e.g. Kilo's WireGuard mesh IP) as InternalIP, which is not
+// reachable through OVN. The Neutron port is the authoritative
+// source for the IP the LB actually has a path to.
+func ListWorkerIPsOnNetwork(ctx context.Context, c *Clients, workerNetworkID string) ([]string, error) {
+	if workerNetworkID == "" {
+		return nil, errors.New("workerNetworkID is empty")
+	}
+
+	pager := ports.List(c.Network, ports.ListOpts{
+		NetworkID:   workerNetworkID,
+		DeviceOwner: "compute:nova",
+	})
+
+	var ips []string
+
+	err := pager.EachPage(ctx, func(_ context.Context, page pagination.Page) (bool, error) {
+		list, err := ports.ExtractPorts(page)
+		if err != nil {
+			return false, err
+		}
+
+		for i := range list {
+			for _, fip := range list[i].FixedIPs {
+				if fip.IPAddress == "" {
+					continue
+				}
+
+				ips = append(ips, fip.IPAddress)
+			}
+		}
+
+		return true, nil
+	})
+	if err != nil {
+		return nil, err //nolint:wrapcheck
+	}
+
+	return ips, nil
+}
+
 func hasSG(list []string, want string) bool {
 	for _, s := range list {
 		if s == want {

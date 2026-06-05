@@ -202,13 +202,16 @@ func (r *tenantServiceReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		return ctrl.Result{RequeueAfter: pendingRequeue}, nil
 	}
 
-	// Member list reflects current Ready Nodes. Empty is a legitimate
-	// state (zero-scale tenant, all nodes NotReady) — feed it through
-	// SyncListenersAndMembers so stale members are cleared. We still
-	// patch the VIP onto status regardless.
-	memberIPs, err := r.tenantNodeIPs(ctx)
+	// Member list = OpenStack-side worker IPs on the cluster network,
+	// not Node.status.addresses[InternalIP]. kubelet may report a
+	// CNI/overlay address (Kilo WireGuard) as InternalIP which OVN
+	// has no path to, so a Neutron-derived list is the only thing
+	// the LB can actually reach. Empty is still a legitimate state
+	// (no workers yet) — feed it through SyncListenersAndMembers so
+	// stale members are cleared. We still patch the VIP onto status.
+	memberIPs, err := openstack.ListWorkerIPsOnNetwork(ctx, clients, cfg.VIPNetworkID)
 	if err != nil {
-		return ctrl.Result{}, errors.Wrap(err, "listing tenant node IPs")
+		return ctrl.Result{}, errors.Wrap(err, "listing worker IPs from OpenStack")
 	}
 
 	if pending, err := openstack.SyncListenersAndMembers(ctx, clients, lb, svc, memberIPs, memberSubnetID); err != nil {
