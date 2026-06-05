@@ -11,9 +11,22 @@ import (
 	"github.com/cockroachdb/errors"
 	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/servers"
 	"github.com/gophercloud/gophercloud/v2/openstack/loadbalancer/v2/loadbalancers"
+	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/extensions/layer3/floatingips"
 	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/extensions/security/groups"
 	"github.com/gophercloud/gophercloud/v2/pagination"
 )
+
+// ServiceExistsFunc reports whether the tenant Service identified by
+// (cluster, namespace, name) still exists in the tenant's apiserver.
+// Returning an error tells the sweeper to leave the resource alone
+// this round and retry on the next tick — bias-towards-safe because
+// the alternative is deleting an LB that a healthy tenant still
+// claims.
+//
+// A nil function (typical for the cluster-only finalizer path)
+// disables the per-Service drift check; only the cluster-orphan
+// path runs.
+type ServiceExistsFunc func(ctx context.Context, cluster, namespace, name string) (bool, error)
 
 // kscServerNamePrefix is what the KSC chart's release prefix
 // resolves to in Nova: every worker that came up via the chart's
@@ -122,18 +135,32 @@ func isConflictError(err error) bool {
 
 // SweepOrphans walks every OpenStack resource that carries the
 // controller's deterministic prefix and deletes any whose owning
-// cluster (KubernetesSwitchcloud CR) is no longer in `knownClusters`.
-// Catches the "controller was off when Service/CR was deleted" and
-// "operator removed something out-of-band" cases — strictly safety
-// net, the per-reconcile cleanup path is the primary cleanup.
+// cluster (KubernetesSwitchcloud CR) is no longer in `knownClusters`,
+// or — when serviceExists is provided — whose owning Service is no
+// longer present in a known tenant cluster. The latter catches a
+// real production trap: when an operator deletes and recreates a
+// tenant with the same name (mesh1 → delete → mesh1 again), every
+// OpenStack resource the previous incarnation left behind still
+// matches the cluster-name prefix, so the cluster-orphan loop alone
+// would keep it forever.
 //
-// knownClusters is the set of cluster names the controller has seen
-// in the management cluster on its most recent registry build.
-// Resources whose cluster is not in this set are considered orphans.
-func SweepOrphans(ctx context.Context, c *Clients, knownClusters map[string]struct{}) error {
+// knownClusters is the set of cluster names the controller currently
+// has live Sessions for. Resources whose cluster is not in this set
+// are unconditional orphans. Resources whose cluster IS in the set
+// are subject to the per-Service drift check via serviceExists.
+//
+// serviceExists may be nil, in which case the per-Service drift
+// check is skipped entirely (preserves the prior behaviour for
+// callers that have no easy way to dial tenant apiservers — tests,
+// the cluster-finalizer fast path).
+func SweepOrphans(ctx context.Context, c *Clients, knownClusters map[string]struct{}, serviceExists ServiceExistsFunc) error {
 	pager := loadbalancers.List(c.LoadBalancer, loadbalancers.ListOpts{})
 
-	var orphanClusters []string
+	var (
+		orphanClusters    []string
+		orphanServiceLBs  []loadbalancers.LoadBalancer
+		serviceExistsSeen = map[string]bool{} // result cache, keyed by cluster/ns/name
+	)
 
 	err := pager.EachPage(ctx, func(_ context.Context, page pagination.Page) (bool, error) {
 		list, err := loadbalancers.ExtractLoadBalancers(page)
@@ -151,17 +178,75 @@ func SweepOrphans(ctx context.Context, c *Clients, knownClusters map[string]stru
 				continue
 			}
 
-			if _, alive := knownClusters[cluster]; alive {
+			if _, alive := knownClusters[cluster]; !alive {
+				orphanClusters = append(orphanClusters, cluster)
+
 				continue
 			}
 
-			orphanClusters = append(orphanClusters, cluster)
+			// Cluster is alive — check the per-Service drift.
+			if serviceExists == nil {
+				continue
+			}
+
+			lbCluster, ns, name, parsed := parseServiceFromTag(lb.Name)
+			if !parsed {
+				continue
+			}
+
+			cacheKey := lbCluster + "/" + ns + "/" + name
+			if cached, ok := serviceExistsSeen[cacheKey]; ok {
+				if !cached {
+					orphanServiceLBs = append(orphanServiceLBs, lb)
+				}
+
+				continue
+			}
+
+			exists, err := serviceExists(ctx, lbCluster, ns, name)
+			if err != nil {
+				// Bias-towards-safe: do not delete on uncertainty.
+				// Cache the inconclusive result as "exists" so we
+				// do not flood the tenant apiserver on subsequent
+				// LBs for the same Service in this pass.
+				serviceExistsSeen[cacheKey] = true
+
+				continue
+			}
+
+			serviceExistsSeen[cacheKey] = exists
+
+			if !exists {
+				orphanServiceLBs = append(orphanServiceLBs, lb)
+			}
 		}
 
 		return true, nil
 	})
 	if err != nil {
 		return errors.Wrap(err, "listing LBs for orphan sweep") //nolint:wrapcheck
+	}
+
+	// Delete per-Service-orphan LBs by ID. We bypass the higher-level
+	// DeleteLB(svc) call because the tenant Service object is precisely
+	// the thing that does NOT exist — synthesising a fake corev1.Service
+	// just to thread the same call would be the wrong shape.
+	for _, lb := range orphanServiceLBs {
+		if err := loadbalancers.Delete(ctx, c.LoadBalancer, lb.ID, loadbalancers.DeleteOpts{Cascade: true}).ExtractErr(); err != nil {
+			if !isConflictError(err) {
+				return errors.Wrapf(err, "deleting per-Service orphan LB %s (%s)", lb.Name, lb.ID)
+			}
+		}
+	}
+
+	// Same per-Service drift check for FIPs: the FIP description
+	// carries the same cozystack:<cluster>/<ns>/<svc> tag. A FIP whose
+	// Service no longer exists is a stranded public IP — costs money,
+	// confuses DNS, and is hard to spot without this sweep.
+	if serviceExists != nil {
+		if err := sweepOrphanFloatingIPs(ctx, c, knownClusters, serviceExists, serviceExistsSeen); err != nil {
+			return errors.Wrap(err, "sweeping per-Service orphan FIPs")
+		}
 	}
 
 	// Dedup orphans (one cluster can own many LBs) before sweeping.
@@ -299,6 +384,81 @@ func isClaimedByKnown(serverName string, knownClusters map[string]struct{}) bool
 	return false
 }
 
+// sweepOrphanFloatingIPs walks every FIP whose description matches
+// the controller-managed `cozystack:<cluster>/<ns>/<svc>` shape and
+// deletes the ones whose Service is gone but whose cluster is still
+// known. FIPs whose cluster is unknown are NOT touched here: those
+// are picked up by SweepClusterResources via the cluster-orphan
+// branch above (it walks LBs and deletes attached FIPs in one go),
+// so handling them again here would double-delete and produce 404
+// noise.
+func sweepOrphanFloatingIPs(ctx context.Context, c *Clients, knownClusters map[string]struct{}, serviceExists ServiceExistsFunc, cache map[string]bool) error {
+	pager := floatingips.List(c.Network, floatingips.ListOpts{})
+
+	var orphans []floatingips.FloatingIP
+
+	err := pager.EachPage(ctx, func(_ context.Context, page pagination.Page) (bool, error) {
+		list, err := floatingips.ExtractFloatingIPs(page)
+		if err != nil {
+			return false, err
+		}
+
+		for _, fip := range list {
+			if !strings.HasPrefix(fip.Description, managedNamePrefix) {
+				continue
+			}
+
+			cluster, ns, name, parsed := parseServiceFromTag(fip.Description)
+			if !parsed {
+				continue
+			}
+
+			if _, alive := knownClusters[cluster]; !alive {
+				// Cluster-orphan path will get this one through
+				// SweepClusterResources on the next outer-loop tick.
+				continue
+			}
+
+			cacheKey := cluster + "/" + ns + "/" + name
+			if cached, ok := cache[cacheKey]; ok {
+				if !cached {
+					orphans = append(orphans, fip)
+				}
+
+				continue
+			}
+
+			exists, err := serviceExists(ctx, cluster, ns, name)
+			if err != nil {
+				cache[cacheKey] = true
+
+				continue
+			}
+
+			cache[cacheKey] = exists
+
+			if !exists {
+				orphans = append(orphans, fip)
+			}
+		}
+
+		return true, nil
+	})
+	if err != nil {
+		return errors.Wrap(err, "listing FIPs for per-Service orphan sweep") //nolint:wrapcheck
+	}
+
+	for _, fip := range orphans {
+		if err := floatingips.Delete(ctx, c.Network, fip.ID).ExtractErr(); err != nil {
+			if !isConflictError(err) {
+				return errors.Wrapf(err, "deleting per-Service orphan FIP %s (%s)", fip.FloatingIP, fip.ID)
+			}
+		}
+	}
+
+	return nil
+}
+
 // parseClusterFromLBName extracts the <cluster> token from a name of
 // shape `cozystack:<cluster>/<ns>/<svc>`. Returns ok=false on any
 // other shape.
@@ -315,4 +475,35 @@ func parseClusterFromLBName(name string) (string, bool) {
 	}
 
 	return rest[:slash], true
+}
+
+// parseServiceFromTag splits a tag of shape
+// `cozystack:<cluster>/<namespace>/<service>` into its three
+// components. Used by the orphan sweeper to attribute LBs and FIPs
+// to a specific tenant Service so we can ask the tenant apiserver
+// whether the Service still exists. Returns ok=false on any shape
+// that does not match (including the longer NodePort-rule shape
+// `cozystack:<cluster>/<ns>/<svc>:<port>/<proto>:<cidr>`, which is
+// a SG-rule tag and is handled separately).
+func parseServiceFromTag(tag string) (cluster, namespace, name string, ok bool) {
+	if !strings.HasPrefix(tag, managedNamePrefix) {
+		return "", "", "", false
+	}
+
+	rest := strings.TrimPrefix(tag, managedNamePrefix)
+
+	parts := strings.SplitN(rest, "/", 3)
+	if len(parts) != 3 || parts[0] == "" || parts[1] == "" || parts[2] == "" {
+		return "", "", "", false
+	}
+
+	// Service name must not contain the ':<port>...' rule suffix.
+	// Sweeper passes per-Service drift checking against LB names
+	// (clean shape) and FIP descriptions (clean shape); the rule
+	// tag is parsed by a separate helper.
+	if strings.ContainsRune(parts[2], ':') {
+		return "", "", "", false
+	}
+
+	return parts[0], parts[1], parts[2], true
 }

@@ -405,6 +405,29 @@ func (m *Manager) Tenants() []string {
 	return names
 }
 
+// TenantClient returns the tenant cluster client for `tenant` if a
+// live Session exists. The orphan sweeper uses this to ask the
+// tenant apiserver whether a Service that an OpenStack LB / FIP
+// claims to back still exists — the per-Service drift check that
+// catches "same-name tenant recreate left old orphans" cases.
+//
+// Returns (nil, false) when there is no Session for the tenant.
+// Callers MUST treat this as "do not delete anything for this
+// tenant" rather than "Service is gone, delete": deleting LBs for
+// a tenant whose Session is briefly absent (mid-restart, transient
+// apiserver blip) would be a real outage.
+func (m *Manager) TenantClient(tenant string) (ctrlclient.Client, bool) {
+	m.sessionsMu.Lock()
+	defer m.sessionsMu.Unlock()
+
+	sess, present := m.sessions[tenant]
+	if !present {
+		return nil, false
+	}
+
+	return sess.Client(), true
+}
+
 // secretSnapshot pairs a kubeconfig payload with its hash so callers
 // can compare without re-hashing.
 type secretSnapshot struct {

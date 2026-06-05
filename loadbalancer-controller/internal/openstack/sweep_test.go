@@ -106,3 +106,53 @@ func TestParseClusterFromLBName(t *testing.T) {
 		})
 	}
 }
+
+func TestParseServiceFromTag(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name string
+		tag  string
+		// expected (cluster, namespace, service, ok)
+		wantCluster string
+		wantNS      string
+		wantSvc     string
+		wantOK      bool
+	}{
+		{
+			name:        "standard LB shape",
+			tag:         "cozystack:mesh3/lb-test/hello-lb",
+			wantCluster: "mesh3", wantNS: "lb-test", wantSvc: "hello-lb", wantOK: true,
+		},
+		{
+			name:        "multi-token cluster",
+			tag:         "cozystack:prod-east/ns/svc",
+			wantCluster: "prod-east", wantNS: "ns", wantSvc: "svc", wantOK: true,
+		},
+		{
+			name: "SG-rule extended shape rejected",
+			// NodePort rule descriptions carry an extra :<port>/<proto>:<cidr>
+			// tail. parseServiceFromTag is the Service-identity parser
+			// only; rule-aware code parses separately.
+			tag:    "cozystack:mesh3/lb-test/hello-lb:31200/tcp:0.0.0.0/0",
+			wantOK: false,
+		},
+		{name: "non-managed prefix", tag: "other:mesh3/lb-test/hello-lb", wantOK: false},
+		{name: "missing parts", tag: "cozystack:mesh3/lb-test", wantOK: false},
+		{name: "empty cluster", tag: "cozystack:/lb-test/hello-lb", wantOK: false},
+		{name: "empty service", tag: "cozystack:mesh3/lb-test/", wantOK: false},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			cluster, ns, svc, ok := parseServiceFromTag(tc.tag)
+			if ok != tc.wantOK || cluster != tc.wantCluster || ns != tc.wantNS || svc != tc.wantSvc {
+				t.Errorf("parseServiceFromTag(%q) = (%q, %q, %q, %v); want (%q, %q, %q, %v)",
+					tc.tag, cluster, ns, svc, ok, tc.wantCluster, tc.wantNS, tc.wantSvc, tc.wantOK)
+			}
+		})
+	}
+}
