@@ -28,11 +28,16 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/cluster"
 )
 
+// Tenant kubeconfig Secret naming convention. Exported so callers
+// outside this package (the tenant-secret watcher, future operators
+// over the same set) stay in sync without each maintaining a private
+// copy of the strings; a drift here would silently miss real tenants
+// or restart on unrelated Secrets.
 const (
-	tenantNamespace      = "tenant-root"
-	kubeconfigSuffix     = "-admin-kubeconfig"
-	kubeconfigSecretKey  = "super-admin.conf"
-	kubeconfigNamePrefix = "kubernetes-switchcloud-"
+	TenantNamespace      = "tenant-root"
+	KubeconfigSuffix     = "-admin-kubeconfig"
+	KubeconfigSecretKey  = "super-admin.conf"
+	KubeconfigNamePrefix = "kubernetes-switchcloud-"
 )
 
 // Registry holds one cluster.Cluster per tenant, keyed by tenant name.
@@ -58,7 +63,7 @@ func Build(ctx context.Context, mgmtCfg *rest.Config, log logr.Logger) (*Registr
 	}
 
 	var secrets corev1.SecretList
-	if err := pre.List(ctx, &secrets, ctrlclient.InNamespace(tenantNamespace)); err != nil {
+	if err := pre.List(ctx, &secrets, ctrlclient.InNamespace(TenantNamespace)); err != nil {
 		return nil, errors.Wrap(err, "listing tenant kubeconfig Secrets")
 	}
 
@@ -66,16 +71,16 @@ func Build(ctx context.Context, mgmtCfg *rest.Config, log logr.Logger) (*Registr
 
 	for i := range secrets.Items {
 		s := &secrets.Items[i]
-		if !strings.HasPrefix(s.Name, kubeconfigNamePrefix) || !strings.HasSuffix(s.Name, kubeconfigSuffix) {
+		if !strings.HasPrefix(s.Name, KubeconfigNamePrefix) || !strings.HasSuffix(s.Name, KubeconfigSuffix) {
 			continue
 		}
 
-		tenant := strings.TrimSuffix(strings.TrimPrefix(s.Name, kubeconfigNamePrefix), kubeconfigSuffix)
+		tenant := strings.TrimSuffix(strings.TrimPrefix(s.Name, KubeconfigNamePrefix), KubeconfigSuffix)
 		if tenant == "" {
 			continue
 		}
 
-		kubeconfig, ok := s.Data[kubeconfigSecretKey]
+		kubeconfig, ok := s.Data[KubeconfigSecretKey]
 		if !ok || len(kubeconfig) == 0 {
 			log.Info("tenant kubeconfig Secret missing super-admin.conf; skipping",
 				"tenant", tenant,

@@ -19,9 +19,9 @@ Licensed under the Apache License, Version 2.0 (the "License");
 // Kamaji control plane is destroyed and re-provisioned, the new
 // apiserver presents a cert signed by a brand-new CA, and the old
 // REST client in the registry keeps emitting "x509: certificate
-// signed by unknown authority" on every list/watch forever. Same
-// problem in reverse for a removed tenant: nothing is there to
-// dial, but the controller keeps trying.
+// signed by unknown authority" on every list/watch loop forever.
+// Same problem in reverse for a removed tenant: nothing is there
+// to dial, but the controller keeps trying.
 //
 // kilo-clustermesh-operator solved the same shape by watching the
 // inputs that the static configuration was derived from and
@@ -45,17 +45,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
-)
 
-// These must match multicluster.tenantNamespace / kubeconfigNamePrefix
-// / kubeconfigSuffix. Duplicated locally rather than exported from
-// internal/multicluster to keep the dependency direction one-way
-// (multicluster depends on no other internal package) and to make the
-// watcher self-contained for code review.
-const (
-	tenantNamespace      = "tenant-root"
-	kubeconfigNamePrefix = "kubernetes-switchcloud-"
-	kubeconfigSuffix     = "-admin-kubeconfig"
+	"github.com/aenix-org/kubernetes-switchcloud/loadbalancer-controller/internal/multicluster"
 )
 
 // TenantSecretWatcher watches the set of tenant kubeconfig Secrets in
@@ -93,7 +84,7 @@ func (w *TenantSecretWatcher) SetupWithManager(mgr ctrl.Manager) error {
 // reason enough to rebuild, and recomputing over the full list keeps
 // the watcher resilient to missed events.
 func (w *TenantSecretWatcher) Reconcile(ctx context.Context, _ reconcile.Request) (reconcile.Result, error) {
-	fp, err := w.ComputeFingerprint(ctx)
+	fp, err := ComputeFingerprint(ctx, w.Client)
 	if err != nil {
 		return reconcile.Result{}, errors.Wrap(err, "computing tenant-secret fingerprint")
 	}
@@ -115,25 +106,26 @@ func (w *TenantSecretWatcher) Reconcile(ctx context.Context, _ reconcile.Request
 }
 
 // ComputeFingerprint returns a deterministic hash of the current
-// tenant kubeconfig set. The hash inputs are the Secret name and the
-// ResourceVersion: ResourceVersion changes on any Update (including
-// CA rotation after delete+recreate), and a removed/added tenant is
-// captured by the name list itself.
+// tenant kubeconfig set. Inputs are the Secret name and the
+// sha256 of Secret.Data: hashing the payload (rather than
+// ResourceVersion) suppresses spurious restarts on label/annotation
+// edits, managedFields rewrites, and other apiserver-side metadata
+// churn that does not affect what the registry would build. A
+// removed/added tenant is captured by the name list itself.
 //
-// Exported so main can call it once at startup to seed
-// StartFingerprint before the manager starts the controllers — the
-// controllers see the same snapshot the watcher was initialised with,
-// and the first reconcile that hits a different fingerprint really
-// reflects a change since startup, not a startup race.
-func (w *TenantSecretWatcher) ComputeFingerprint(ctx context.Context) (string, error) {
+// Takes an explicit client.Reader so the caller can supply either the
+// manager's cache (post-Start, normal Reconcile path) or a fresh
+// uncached client (pre-Start, when seeding StartFingerprint) without
+// any temporary state mutation on the watcher.
+func ComputeFingerprint(ctx context.Context, c client.Reader) (string, error) {
 	var secrets corev1.SecretList
-	if err := w.List(ctx, &secrets, client.InNamespace(tenantNamespace)); err != nil {
+	if err := c.List(ctx, &secrets, client.InNamespace(multicluster.TenantNamespace)); err != nil {
 		return "", errors.Wrap(err, "listing tenant Secrets")
 	}
 
 	type ref struct {
-		name string
-		rv   string
+		name    string
+		dataSum [sha256.Size]byte
 	}
 
 	refs := make([]ref, 0, len(secrets.Items))
@@ -144,7 +136,7 @@ func (w *TenantSecretWatcher) ComputeFingerprint(ctx context.Context) (string, e
 			continue
 		}
 
-		refs = append(refs, ref{name: s.Name, rv: s.ResourceVersion})
+		refs = append(refs, ref{name: s.Name, dataSum: hashSecretData(s.Data)})
 	}
 
 	sort.Slice(refs, func(i, j int) bool { return refs[i].name < refs[j].name })
@@ -154,37 +146,66 @@ func (w *TenantSecretWatcher) ComputeFingerprint(ctx context.Context) (string, e
 	for _, r := range refs {
 		h.Write([]byte(r.name))
 		h.Write([]byte{0})
-		h.Write([]byte(r.rv))
+		h.Write(r.dataSum[:])
 		h.Write([]byte{0})
 	}
 
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
+// hashSecretData returns a deterministic SHA-256 of a Secret's data
+// map: keys sorted, each (key, value) pair length-prefixed with a
+// null separator so distinct maps cannot collide via boundary tricks.
+// We hash the payload directly rather than its size or version so
+// only real kubeconfig content changes (CA rotation, server URL
+// change, key rotation) bump the fingerprint.
+func hashSecretData(data map[string][]byte) [sha256.Size]byte {
+	keys := make([]string, 0, len(data))
+	for k := range data {
+		keys = append(keys, k)
+	}
+
+	sort.Strings(keys)
+
+	h := sha256.New()
+
+	for _, k := range keys {
+		h.Write([]byte(k))
+		h.Write([]byte{0})
+		h.Write(data[k])
+		h.Write([]byte{0})
+	}
+
+	var out [sha256.Size]byte
+
+	copy(out[:], h.Sum(nil))
+
+	return out
+}
+
 // isTenantKubeconfigName reports whether a Secret name follows the
 // `kubernetes-switchcloud-<tenant>-admin-kubeconfig` convention.
-// Pulled out so the predicate and the fingerprint list agree on the
-// filter.
+// Shared by the predicate and the fingerprint list so they agree on
+// the filter.
 func isTenantKubeconfigName(name string) bool {
-	if !strings.HasPrefix(name, kubeconfigNamePrefix) || !strings.HasSuffix(name, kubeconfigSuffix) {
+	if !strings.HasPrefix(name, multicluster.KubeconfigNamePrefix) || !strings.HasSuffix(name, multicluster.KubeconfigSuffix) {
 		return false
 	}
 
-	tenant := strings.TrimSuffix(strings.TrimPrefix(name, kubeconfigNamePrefix), kubeconfigSuffix)
+	tenant := strings.TrimSuffix(strings.TrimPrefix(name, multicluster.KubeconfigNamePrefix), multicluster.KubeconfigSuffix)
 
 	return tenant != ""
 }
 
 // isTenantKubeconfigSecret is the event-time predicate. Returns true
-// when the Secret name matches the kubeconfig convention and the
-// namespace is the tenant-root namespace. Applied to Create, Update,
+// when the Secret is in the tenant-root namespace and the name
+// matches the kubeconfig convention. Applied to Create, Update,
 // Delete and Generic events alike — any of those is enough to change
 // the fingerprint.
 func isTenantKubeconfigSecret(obj client.Object) bool {
-	if obj.GetNamespace() != tenantNamespace {
+	if obj.GetNamespace() != multicluster.TenantNamespace {
 		return false
 	}
 
 	return isTenantKubeconfigName(obj.GetName())
 }
-
