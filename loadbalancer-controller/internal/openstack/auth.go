@@ -36,6 +36,7 @@ type Clients struct {
 	Provider     *gophercloud.ProviderClient
 	LoadBalancer *gophercloud.ServiceClient
 	Network      *gophercloud.ServiceClient
+	Compute      *gophercloud.ServiceClient
 	Region       string
 }
 
@@ -81,10 +82,16 @@ func NewClients(ctx context.Context, creds Credentials) (*Clients, error) {
 		return nil, errors.Wrap(err, "building Neutron v2 client")
 	}
 
+	computev2, err := osclient.NewComputeV2(provider, eo)
+	if err != nil {
+		return nil, errors.Wrap(err, "building Nova compute v2 client")
+	}
+
 	return &Clients{
 		Provider:     provider,
 		LoadBalancer: lbv2,
 		Network:      netv2,
+		Compute:      computev2,
 		Region:       creds.RegionName,
 	}, nil
 }

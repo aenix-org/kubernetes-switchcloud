@@ -9,10 +9,20 @@ import (
 	"strings"
 
 	"github.com/cockroachdb/errors"
+	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/servers"
 	"github.com/gophercloud/gophercloud/v2/openstack/loadbalancer/v2/loadbalancers"
 	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/extensions/security/groups"
 	"github.com/gophercloud/gophercloud/v2/pagination"
 )
+
+// kscServerNamePrefix is what the KSC chart's release prefix
+// resolves to in Nova: every worker that came up via the chart's
+// OpenStackMachineTemplate is named
+// `kubernetes-switchcloud-<cluster>-<nodegroup>-<hash>-<hash>`. CAPO
+// configures these as boot-from-volume with delete_on_termination, so
+// a plain `server delete` reclaims both the instance and its root
+// volume — no separate cinder cleanup needed.
+const kscServerNamePrefix = "kubernetes-switchcloud-"
 
 // SweepClusterResources removes every OpenStack resource the controller
 // could have provisioned on behalf of `cluster`. Used by the
@@ -183,6 +193,76 @@ func SweepOrphans(ctx context.Context, c *Clients, knownClusters map[string]stru
 	}
 
 	return nil
+}
+
+// SweepOrphanNovaServers terminates every Nova server whose name
+// starts with the KSC chart's release prefix
+// (`kubernetes-switchcloud-<cluster>-...`) when <cluster> is not in
+// knownClusters. Used as a safety net when CAPO's normal teardown
+// (cluster delete -> OpenStackCluster delete -> Machine delete ->
+// Nova server delete) failed to complete — e.g. when a previous
+// release of this controller deleted the KubernetesSwitchcloud CR
+// before its finalizer could fire and left workers behind.
+//
+// Matching is by exact cluster-name prefix
+// (`kubernetes-switchcloud-<known>-`), so multi-token cluster names
+// (`prod-east`, etc.) are handled correctly: any server whose name
+// starts with that prefix is claimed by a known cluster and skipped.
+func SweepOrphanNovaServers(ctx context.Context, c *Clients, knownClusters map[string]struct{}) error {
+	if c.Compute == nil {
+		return errors.New("openstack.Clients.Compute is nil; cannot sweep Nova servers")
+	}
+
+	pager := servers.List(c.Compute, servers.ListOpts{})
+
+	var orphans []servers.Server
+
+	err := pager.EachPage(ctx, func(_ context.Context, page pagination.Page) (bool, error) {
+		list, err := servers.ExtractServers(page)
+		if err != nil {
+			return false, err
+		}
+
+		for _, s := range list {
+			if !strings.HasPrefix(s.Name, kscServerNamePrefix) {
+				continue
+			}
+
+			if isClaimedByKnown(s.Name, knownClusters) {
+				continue
+			}
+
+			orphans = append(orphans, s)
+		}
+
+		return true, nil
+	})
+	if err != nil {
+		return errors.Wrap(err, "listing Nova servers for orphan sweep") //nolint:wrapcheck
+	}
+
+	for _, s := range orphans {
+		if err := servers.Delete(ctx, c.Compute, s.ID).ExtractErr(); err != nil {
+			return errors.Wrapf(err, "deleting orphan Nova server %s (%s)", s.Name, s.ID)
+		}
+	}
+
+	return nil
+}
+
+// isClaimedByKnown reports whether serverName looks like
+// `kubernetes-switchcloud-<known>-...` for any `<known>` in
+// knownClusters. The full prefix anchor avoids the mesh1-vs-mesh10
+// false-positive a plain HasPrefix(serverName, prefix+known) would
+// produce.
+func isClaimedByKnown(serverName string, knownClusters map[string]struct{}) bool {
+	for cluster := range knownClusters {
+		if strings.HasPrefix(serverName, kscServerNamePrefix+cluster+"-") {
+			return true
+		}
+	}
+
+	return false
 }
 
 // parseClusterFromLBName extracts the <cluster> token from a name of
