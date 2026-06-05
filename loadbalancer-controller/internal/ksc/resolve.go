@@ -88,6 +88,19 @@ func Resolve(ctx context.Context, mgmtClient ctrlclient.Client, tenant string) (
 	enabled, _, _ := unstructured.NestedBool(ksc.Object, "spec", "openstack", "loadBalancer", "enabled")
 	cfg.Enabled = enabled
 
+	// Credentials must be available even when LB is disabled: the
+	// per-cluster HelmRelease finalizer runs SweepClusterResources
+	// on every tenant during teardown (to catch LBs created while
+	// LB was briefly enabled, plus the cozystack-lb SG, etc.), and
+	// it needs OpenStack auth to do so. Reading them up front means
+	// a tenant that never had LB enabled can still be cleaned up.
+	creds, err := resolveCredentials(ctx, mgmtClient, ksc)
+	if err != nil {
+		return nil, errors.Wrapf(err, "resolving OpenStack credentials for tenant %q", tenant)
+	}
+
+	cfg.Creds = creds
+
 	if !cfg.Enabled {
 		return cfg, nil
 	}
@@ -159,13 +172,6 @@ func Resolve(ctx context.Context, mgmtClient ctrlclient.Client, tenant string) (
 	}
 
 	cfg.AllowedCIDRs = canon
-
-	creds, err := resolveCredentials(ctx, mgmtClient, ksc)
-	if err != nil {
-		return nil, errors.Wrapf(err, "resolving OpenStack credentials for tenant %q", tenant)
-	}
-
-	cfg.Creds = creds
 
 	return cfg, nil
 }
