@@ -105,12 +105,19 @@ func SweepClusterResources(ctx context.Context, c *Clients, cluster string) erro
 // isConflictError reports whether err is a 409 Conflict from
 // OpenStack — gophercloud surfaces these via the v2 ErrUnexpectedResponseCode
 // helper rather than a typed error, so we string-match the status.
+// gophercloud v2 renders the message as "... but got 409 instead";
+// the v1 form was "Bad response code: 409". Match both so the
+// detector survives a future v1→v2 message tweak too.
 func isConflictError(err error) bool {
 	if err == nil {
 		return false
 	}
 
-	return strings.Contains(err.Error(), "Bad response code: 409")
+	msg := err.Error()
+
+	return strings.Contains(msg, "got 409 instead") ||
+		strings.Contains(msg, "Bad response code: 409") ||
+		strings.Contains(msg, "SecurityGroupInUse")
 }
 
 // SweepOrphans walks every OpenStack resource that carries the
