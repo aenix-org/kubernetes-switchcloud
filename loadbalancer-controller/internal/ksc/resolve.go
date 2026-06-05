@@ -16,6 +16,7 @@ package ksc
 
 import (
 	"context"
+	"net/netip"
 
 	"github.com/cockroachdb/errors"
 	corev1 "k8s.io/api/core/v1"
@@ -123,10 +124,26 @@ func Resolve(ctx context.Context, mgmtClient ctrlclient.Client, tenant string) (
 	if len(rawCIDRs) == 0 {
 		// Match the openAPI default — open to the world. Operators
 		// who want narrower exposure set explicit CIDRs in the CR.
-		cfg.AllowedCIDRs = []string{"0.0.0.0/0"}
-	} else {
-		cfg.AllowedCIDRs = rawCIDRs
+		rawCIDRs = []string{"0.0.0.0/0"}
 	}
+
+	// Canonicalize every CIDR so subsequent diff against the
+	// Neutron-returned form is stable. Neutron normalizes IPv6
+	// prefixes on store (uppercase hex, leading zeros, etc.); without
+	// this pre-pass an operator-supplied "2001:DB8::/32" would never
+	// match the listed "2001:db8::/32" and the controller would loop
+	// delete/recreate forever.
+	canon := make([]string, 0, len(rawCIDRs))
+	for _, raw := range rawCIDRs {
+		p, err := netip.ParsePrefix(raw)
+		if err != nil {
+			return nil, errors.Wrapf(err, "parsing spec.openstack.loadBalancer.allowedCIDRs[%q]", raw)
+		}
+
+		canon = append(canon, p.Masked().String())
+	}
+
+	cfg.AllowedCIDRs = canon
 
 	creds, err := resolveCredentials(ctx, mgmtClient, ksc)
 	if err != nil {
