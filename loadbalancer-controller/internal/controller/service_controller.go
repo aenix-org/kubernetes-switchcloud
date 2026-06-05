@@ -223,10 +223,27 @@ func (r *tenantServiceReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	// itself (useful for IPv6-only or internal-only setups).
 	publicAddr := lb.VipAddress
 
-	if cfg.FloatingNetworkID != "" {
+	// Auto-discover the FIP source network when the operator left
+	// the field empty: pick the project's single external network
+	// (router:external=true). Matches the Switch Cloud zhw `public`
+	// topology by default and keeps the CR minimal — operator only
+	// needs to set `enabled: true` plus credentials. An operator who
+	// wants an internal-only LB sets `floatingNetworkID: none` (or
+	// any future sentinel) — for now empty == auto-discover.
+	floatingNetID := cfg.FloatingNetworkID
+	if floatingNetID == "" {
+		discovered, err := openstack.FindFirstExternalNetwork(ctx, clients)
+		if err != nil {
+			return ctrl.Result{}, errors.Wrap(err, "auto-discovering floating network")
+		}
+
+		floatingNetID = discovered
+	}
+
+	if floatingNetID != "" {
 		fipDesc := openstack.ServiceLBName(r.tenant, svc.Namespace, svc.Name)
 
-		fipAddr, err := openstack.EnsureFloatingIP(ctx, clients, lb.VipPortID, cfg.FloatingNetworkID, cfg.FloatingSubnetID, fipDesc)
+		fipAddr, err := openstack.EnsureFloatingIP(ctx, clients, lb.VipPortID, floatingNetID, cfg.FloatingSubnetID, fipDesc)
 		if err != nil {
 			return ctrl.Result{}, errors.Wrap(err, "ensuring floating IP")
 		}
