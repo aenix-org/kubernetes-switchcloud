@@ -247,8 +247,34 @@ spec:
   identityRef:
     name: {{ $credSecret }}
     cloudName: {{ .Values.openstack.cloudName }}
+{{- if .Values.openstack.network.id }}
+  # Legacy mode: operator-provisioned network. CAPO consumes a
+  # pre-existing Neutron network by ID. Workers join L2 with whatever
+  # else lives in this network — no per-cluster isolation.
   network:
     id: {{ .Values.openstack.network.id }}
+{{- else }}
+  # Auto-managed mode: CAPO creates a dedicated Neutron network,
+  # subnet, and router (with external gateway) per cluster on apply,
+  # and tears them down on cluster delete. Per-cluster L2/L3 isolation
+  # comes for free — distinct networks across clusters mean no shared
+  # broadcast / ARP domain and no implicit cross-cluster routing.
+  managedSubnets:
+    - cidr: {{ .Values.openstack.network.subnetCIDR | quote }}
+{{- with .Values.openstack.network.dnsNameservers }}
+      dnsNameservers:
+{{- range . }}
+        - {{ . | quote }}
+{{- end }}
+{{- end }}
+{{- if .Values.openstack.network.externalNetworkID }}
+  externalNetworkId: {{ .Values.openstack.network.externalNetworkID }}
+{{- end }}
+  # CAPO-managed control + worker security groups with the k8s
+  # baseline open (kubelet, etcd, kAPI, CNI, inter-node). Per-Service
+  # NodePort rules are added on top by the loadbalancer-controller.
+  managedSecurityGroups: {}
+{{- end }}
   apiServerLoadBalancer:
     enabled: false
   disableAPIServerFloatingIP: true
