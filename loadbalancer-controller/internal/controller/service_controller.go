@@ -410,6 +410,16 @@ func (r *tenantServiceReconciler) cleanup(ctx context.Context, svc *corev1.Servi
 		return ctrl.Result{RequeueAfter: pendingRequeue}, nil
 	}
 
+	// Clear Service.status.loadBalancer.ingress before dropping the
+	// finalizer. Otherwise kubectl get svc keeps showing the (now
+	// dead) FIP and any external DNS A-record pointing at that
+	// status silently turns into a black hole. Standard cloud-provider
+	// convention is to publish on create and clear on delete; the
+	// previous behaviour only honoured the publish half.
+	if err := r.clearStatusIngress(ctx, svc); err != nil {
+		return ctrl.Result{}, errors.Wrap(err, "clearing Service status loadBalancer.ingress")
+	}
+
 	return r.dropFinalizer(ctx, svc)
 }
 
@@ -519,6 +529,40 @@ func (r *tenantServiceReconciler) patchStatus(ctx context.Context, svc *corev1.S
 
 	if err := r.tenantClient.Status().Patch(ctx, fresh, patch); err != nil {
 		return errors.Wrap(err, "patching Service status loadBalancer.ingress")
+	}
+
+	return nil
+}
+
+// clearStatusIngress wipes Service.status.loadBalancer.ingress when
+// the underlying Octavia LB has been torn down. Mirrors patchStatus
+// in shape (refetch + merge-patch on status subresource) but writes
+// an empty slice. No-op when there is nothing to clear so we don't
+// generate spurious API server traffic on every cleanup pass.
+func (r *tenantServiceReconciler) clearStatusIngress(ctx context.Context, svc *corev1.Service) error {
+	if len(svc.Status.LoadBalancer.Ingress) == 0 {
+		return nil
+	}
+
+	fresh := &corev1.Service{}
+	if err := r.tenantClient.Get(ctx, types.NamespacedName{Namespace: svc.Namespace, Name: svc.Name}, fresh); err != nil {
+		if apierrors.IsNotFound(err) {
+			// Service already gone — nothing to clear.
+			return nil
+		}
+
+		return errors.Wrap(err, "refetching Service before clearing status")
+	}
+
+	if len(fresh.Status.LoadBalancer.Ingress) == 0 {
+		return nil
+	}
+
+	patch := client.MergeFrom(fresh.DeepCopy())
+	fresh.Status.LoadBalancer.Ingress = nil
+
+	if err := r.tenantClient.Status().Patch(ctx, fresh, patch); err != nil {
+		return errors.Wrap(err, "patching Service status loadBalancer.ingress to empty")
 	}
 
 	return nil
