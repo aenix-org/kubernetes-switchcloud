@@ -201,6 +201,36 @@ func (r *tenantServiceReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	}
 
 	if hrDeleting {
+		// Cluster sweep handles the controller-managed SG and the LBs
+		// owned by this tenant. If the operator pinned
+		// loadBalancer.workerSecurityGroupID to an SG they own,
+		// SweepClusterResources will not touch it: that SG outlives
+		// the tenant and would otherwise accumulate per-Service
+		// NodePort rules tagged `cozystack:<tenant>/<ns>/<svc>:*`
+		// from every cluster that ever lived. Best-effort wipe the
+		// rules we put there before dropping the finalizer; failures
+		// are logged but never block the finalizer-drop, because
+		// holding the Service open against a tenant that is going
+		// away helps nobody.
+		if cfg.WorkerSecurityGroupID != "" && containsString(svc.Finalizers, FinalizerName) {
+			if clients, ccErr := openstack.NewClients(ctx, cfg.Creds); ccErr == nil {
+				if delErr := openstack.DeleteNodePortRules(ctx, clients, cfg.WorkerSecurityGroupID, r.tenant, svc); delErr != nil {
+					r.log.Info("HR terminating: best-effort NodePort rule cleanup failed on operator-supplied SG",
+						"namespace", svc.Namespace,
+						"name", svc.Name,
+						"workerSecurityGroupID", cfg.WorkerSecurityGroupID,
+						"error", delErr.Error(),
+					)
+				}
+			} else {
+				r.log.Info("HR terminating: skipping operator-SG cleanup, OpenStack client unavailable",
+					"namespace", svc.Namespace,
+					"name", svc.Name,
+					"error", ccErr.Error(),
+				)
+			}
+		}
+
 		r.log.V(1).Info("HelmRelease is terminating; deferring to cluster-level sweep",
 			"namespace", svc.Namespace,
 			"name", svc.Name,
