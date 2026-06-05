@@ -141,13 +141,16 @@ func (r *tenantServiceReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	managed := svc.Spec.Type == corev1.ServiceTypeLoadBalancer && cfg.Enabled
 	beingDeleted := !svc.DeletionTimestamp.IsZero()
 
-	if !managed && cfg.MisconfiguredReason != "" && svc.Spec.Type == corev1.ServiceTypeLoadBalancer {
-		// Operator opted in but the config is incomplete. Log once
-		// at Warning level and stop — no requeue, the next CR
-		// update will re-trigger reconcile via the management
-		// cluster watch (out of scope here; for now operators must
-		// rely on the controller noticing on the next Service
-		// event after they fix the CR).
+	if !managed && cfg.MisconfiguredReason != "" && svc.Spec.Type == corev1.ServiceTypeLoadBalancer && !containsString(svc.Finalizers, FinalizerName) {
+		// Operator opted in but the config is incomplete, and we
+		// never claimed this Service — nothing to do. Log once and
+		// stop. The next CR update will re-trigger reconcile via
+		// the management cluster watch. A misconfigured Service
+		// that DOES carry our finalizer falls through to the
+		// cleanup branch below: if cfg.Creds resolved we can still
+		// tear down any LB we left behind (e.g. operator broke the
+		// config after the LB was created, then deleted the
+		// Service — we must not hold the Service hostage).
 		r.log.Info("loadBalancer feature misconfigured; skipping Service",
 			"namespace", svc.Namespace,
 			"name", svc.Name,
@@ -323,40 +326,43 @@ func (r *tenantServiceReconciler) cleanup(ctx context.Context, svc *corev1.Servi
 		return ctrl.Result{}, nil
 	}
 
-	if cfg.Enabled {
-		// Feature is enabled for this tenant, so an LB may exist.
-		clients, err := openstack.NewClients(ctx, cfg.Creds)
-		if err != nil {
-			return ctrl.Result{}, errors.Wrap(err, "building OpenStack clients for cleanup")
-		}
+	// The presence of our finalizer is the source of truth that we
+	// created OpenStack-side resources for this Service in the past.
+	// Gating cleanup on cfg.Enabled would mean: operator flips
+	// loadBalancer.enabled false on a tenant that still has live LB
+	// Services, we drop the finalizer immediately, and the Octavia
+	// LBs / FIPs / SG rules get orphaned in OpenStack. So we run
+	// cleanup unconditionally and only fall through to dropFinalizer
+	// once the OpenStack side reports clean.
+	clients, err := openstack.NewClients(ctx, cfg.Creds)
+	if err != nil {
+		return ctrl.Result{}, errors.Wrap(err, "building OpenStack clients for cleanup")
+	}
 
-		// Drop NodePort SG rules first — they are cheap to delete and
-		// harmless to leave behind, but tidier this way. The SG to
-		// touch follows the same resolution rule as the create path:
-		// operator override if present, otherwise the controller's
-		// per-cluster SG (looked up by deterministic name; do NOT
-		// auto-create on cleanup).
-		cleanupSGID, err := r.resolveCleanupSGID(ctx, clients, cfg)
-		if err != nil {
-			return ctrl.Result{}, errors.Wrap(err, "resolving cleanup SG")
-		}
+	// Drop NodePort SG rules first — cheap to delete and tidier this
+	// way. SG resolution mirrors the create path: operator override
+	// if present, otherwise the controller's per-cluster SG (looked
+	// up by deterministic name; do NOT auto-create on cleanup).
+	cleanupSGID, err := r.resolveCleanupSGID(ctx, clients, cfg)
+	if err != nil {
+		return ctrl.Result{}, errors.Wrap(err, "resolving cleanup SG")
+	}
 
-		if cleanupSGID != "" {
-			if err := openstack.DeleteNodePortRules(ctx, clients, cleanupSGID, r.tenant, svc); err != nil {
-				return ctrl.Result{}, errors.Wrap(err, "deleting nodePort SG rules")
-			}
+	if cleanupSGID != "" {
+		if err := openstack.DeleteNodePortRules(ctx, clients, cleanupSGID, r.tenant, svc); err != nil {
+			return ctrl.Result{}, errors.Wrap(err, "deleting nodePort SG rules")
 		}
+	}
 
-		pending, err := openstack.DeleteLB(ctx, clients, r.tenant, svc)
-		if err != nil {
-			return ctrl.Result{}, errors.Wrap(err, "deleting Octavia LB")
-		}
+	pending, err := openstack.DeleteLB(ctx, clients, r.tenant, svc)
+	if err != nil {
+		return ctrl.Result{}, errors.Wrap(err, "deleting Octavia LB")
+	}
 
-		if pending {
-			// LB is in PENDING_DELETE — requeue and check again rather
-			// than dropping the finalizer prematurely.
-			return ctrl.Result{RequeueAfter: pendingRequeue}, nil
-		}
+	if pending {
+		// LB is in PENDING_DELETE — requeue and check again rather
+		// than dropping the finalizer prematurely.
+		return ctrl.Result{RequeueAfter: pendingRequeue}, nil
 	}
 
 	return r.dropFinalizer(ctx, svc)
