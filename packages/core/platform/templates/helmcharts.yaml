@@ -6,7 +6,10 @@ metadata:
   namespace: cozy-public
 spec:
   type: oci
-  url: oci://ghcr.io/aenix-org
+  # Charts live under /charts/ to avoid colliding with container
+  # image tags at the same OCI path. The push side (release.yaml)
+  # writes here; keep both in sync.
+  url: oci://ghcr.io/aenix-org/charts
   interval: 5m
 ---
 apiVersion: source.toolkit.fluxcd.io/v1
