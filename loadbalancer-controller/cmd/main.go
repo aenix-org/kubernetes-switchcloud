@@ -43,6 +43,7 @@ import (
 	"github.com/aenix-org/kubernetes-switchcloud/loadbalancer-controller/internal/ksc"
 	"github.com/aenix-org/kubernetes-switchcloud/loadbalancer-controller/internal/multicluster"
 	"github.com/aenix-org/kubernetes-switchcloud/loadbalancer-controller/internal/openstack"
+	"github.com/aenix-org/kubernetes-switchcloud/loadbalancer-controller/internal/restart"
 )
 
 var scheme = runtime.NewScheme()
@@ -147,6 +148,44 @@ func run() error {
 	// CR-finalizer + per-Service finalizer are the primary cleanup
 	// paths; this is the safety net.
 	go runOrphanSweeper(ctx, mgr.GetClient(), logger.WithName("sweeper"))
+
+	// Tenant-secret watcher. The multicluster.Registry is built once
+	// against the kubeconfig Secrets visible at startup, and the
+	// per-tenant cluster.Cluster objects it holds are frozen for the
+	// life of the manager (controller-runtime does not let us mutate
+	// Watches after mgr.Start). If a tenant is created, deleted, or
+	// recreated with a fresh Kamaji CA, the registry would silently
+	// keep dialling the wrong endpoint and flood the log with x509
+	// errors. The watcher fingerprints the secret set at startup,
+	// then on every Secret event recomputes; on drift it cancels the
+	// manager context so the pod exits and Kubernetes restarts us
+	// against the current state of the world. Same pattern as
+	// kilo-clustermesh-operator's restart.ChangeWatcher.
+	// Snapshot the tenant Secret set via a fresh uncached client (the
+	// manager cache only serves reads after mgr.Start, which has not
+	// happened yet) and pass it to the watcher as StartFingerprint.
+	// Any drift observed by the watcher after this point is real
+	// movement since startup, not a cache-warmup race.
+	preStartClient, err := ctrlclient.New(cfg, ctrlclient.Options{Scheme: scheme})
+	if err != nil {
+		return errors.Wrap(err, "building uncached client for startup fingerprint")
+	}
+
+	startFingerprint, err := restart.ComputeFingerprint(ctx, preStartClient)
+	if err != nil {
+		return errors.Wrap(err, "computing tenant-secret startup fingerprint")
+	}
+
+	tenantWatcher := &restart.TenantSecretWatcher{
+		Client:           mgr.GetClient(),
+		Cancel:           cancel,
+		StartFingerprint: startFingerprint,
+		Log:              logger.WithName("tenant-secret-watcher"),
+	}
+
+	if err := tenantWatcher.SetupWithManager(mgr); err != nil {
+		return errors.Wrap(err, "registering tenant-secret watcher")
+	}
 
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {
 		return errors.Wrap(err, "setting up healthz")
