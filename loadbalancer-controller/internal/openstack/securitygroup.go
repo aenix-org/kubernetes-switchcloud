@@ -129,18 +129,18 @@ func findSGByName(ctx context.Context, c *Clients, name string) (*groups.SecGrou
 func ensureBaselineRules(ctx context.Context, c *Clients, sgID string) error {
 	desired := []rules.CreateOpts{
 		{
-			SecGroupID:   sgID,
-			Direction:    rules.DirIngress,
-			EtherType:    rules.EtherType4,
+			SecGroupID:    sgID,
+			Direction:     rules.DirIngress,
+			EtherType:     rules.EtherType4,
 			RemoteGroupID: sgID,
-			Description:  "cozystack-lb baseline: intra-SG IPv4",
+			Description:   "cozystack-lb baseline: intra-SG IPv4",
 		},
 		{
-			SecGroupID:   sgID,
-			Direction:    rules.DirIngress,
-			EtherType:    rules.EtherType6,
+			SecGroupID:    sgID,
+			Direction:     rules.DirIngress,
+			EtherType:     rules.EtherType6,
 			RemoteGroupID: sgID,
-			Description:  "cozystack-lb baseline: intra-SG IPv6",
+			Description:   "cozystack-lb baseline: intra-SG IPv6",
 		},
 	}
 

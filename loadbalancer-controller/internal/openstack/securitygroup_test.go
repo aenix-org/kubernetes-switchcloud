@@ -115,11 +115,11 @@ func TestRuleDescription_RoundTripsInPrefix(t *testing.T) {
 
 func TestEtherTypeFor(t *testing.T) {
 	cases := map[string]rules.RuleEtherType{
-		"0.0.0.0/0":      rules.EtherType4,
-		"10.0.0.0/8":     rules.EtherType4,
-		"::/0":           rules.EtherType6,
-		"2001:db8::/32":  rules.EtherType6,
-		"fe80::/10":      rules.EtherType6,
+		"0.0.0.0/0":     rules.EtherType4,
+		"10.0.0.0/8":    rules.EtherType4,
+		"::/0":          rules.EtherType6,
+		"2001:db8::/32": rules.EtherType6,
+		"fe80::/10":     rules.EtherType6,
 	}
 
 	for cidr, want := range cases {

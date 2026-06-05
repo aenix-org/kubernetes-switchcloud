@@ -242,6 +242,8 @@ func (r *tenantServiceReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	// project but not the SG, so allow-from-same-SG never crosses
 	// cluster boundaries.
 	workerSGID := cfg.WorkerSecurityGroupID
+	controllerManagedSG := false
+
 	if workerSGID == "" {
 		sgID, err := openstack.EnsureClusterSecurityGroup(ctx, clients, r.tenant)
 		if err != nil {
@@ -249,6 +251,17 @@ func (r *tenantServiceReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		}
 
 		workerSGID = sgID
+		controllerManagedSG = true
+	}
+
+	// When the controller manages the SG it also owns attaching it to
+	// every worker port. Operator-supplied SGs are assumed to already
+	// be wired into the workers via CAPI's nodeGroups.securityGroups —
+	// touching their port attachments would race CAPI's reconciler.
+	if controllerManagedSG {
+		if err := openstack.EnsureSGAttachedToWorkers(ctx, clients, workerSGID, memberIPs, cfg.VIPNetworkID); err != nil {
+			return ctrl.Result{}, errors.Wrap(err, "attaching cluster SG to worker ports")
+		}
 	}
 
 	if err := openstack.EnsureNodePortRules(ctx, clients, workerSGID, r.tenant, svc, cfg.AllowedCIDRs); err != nil {
