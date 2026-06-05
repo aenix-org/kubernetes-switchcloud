@@ -126,7 +126,14 @@ spec:
     applicationCredentialID: "<id>"
     applicationCredentialSecret: "<secret>"
     network:
-      id: "<openstack-network-uuid>"
+      # Auto-managed mode (recommended for new clusters):
+      # leave id empty. CAPO will create a dedicated Neutron
+      # network + subnet + router on cluster apply and tear them
+      # down on cluster delete — per-cluster L2/L3 isolation in
+      # the same OpenStack project comes for free.
+      id: ""
+      subnetCIDR: "10.244.0.0/24"           # IPv4 CIDR for the auto-managed subnet
+      externalNetworkID: ""                 # leave empty to let CAPO auto-discover
     floatingIPNetwork: ""                  # leave empty — SNAT provides outbound internet
   nodeGroups:
     md0:
@@ -172,6 +179,84 @@ kubectl get secret kubernetes-switchcloud-my-cluster-admin-kubeconfig \
 
 kubectl --kubeconfig my-cluster.yaml get nodes
 ```
+
+## Network modes
+
+`spec.openstack.network` has two mutually exclusive modes; the
+chart picks one based on whether `id` is set.
+
+### Auto-managed (recommended for new clusters)
+
+Leave `spec.openstack.network.id` empty. CAPO renders the
+`OpenStackCluster` with `managedSubnets` + `managedSecurityGroups`
+and creates per-cluster:
+
+- Neutron network `<release>-cluster`
+- IPv4 subnet from `spec.openstack.network.subnetCIDR` (default
+  `10.244.0.0/24`)
+- Router with external gateway on
+  `spec.openstack.network.externalNetworkID` (auto-discovered if
+  empty — works in Switch Cloud zhw where `public` is the single
+  external network)
+- Control + worker security groups with the Kubernetes baseline
+  (kubelet, etcd, kube-apiserver, CNI, inter-node)
+
+All four resources are owned by the `OpenStackCluster` CR and
+deleted automatically when the `KubernetesSwitchcloud` CR is
+removed. Different clusters in the same OpenStack project sit on
+distinct networks — no shared ARP/broadcast domain, no implicit
+cross-cluster routing.
+
+IPv6 dual-stack is not yet supported in this mode (CAPO v0.12.x
+`managedSubnets` is IPv4-only); track upstream.
+
+### Legacy (pre-existing network)
+
+Set `spec.openstack.network.id` to the UUID of an operator-provisioned
+Neutron network. The chart skips `managedSubnets` and the workers
+join L2 with whatever else lives in that network. Suitable for
+shared org-wide networks (`Nuvolos`-style) or migration of
+historical clusters. **`spec.openstack.network.id` is immutable
+once set** — clearing it on a live cluster would silently switch
+modes and trigger a full network re-provision; the schema enforces
+this with a CEL rule.
+
+## LoadBalancer Services
+
+When the `loadbalancer-controller` is installed in the management
+cluster, tenant Services of `type: LoadBalancer` are provisioned
+end-to-end automatically. Opt in per cluster:
+
+```yaml
+spec:
+  openstack:
+    loadBalancer:
+      enabled: true
+      vipNetworkID: ""        # auto-discovered from OpenStackCluster.status.network.id
+      floatingNetworkID: "<public-net-uuid>"
+```
+
+What the controller manages:
+
+- Octavia LB (OVN provider, single `SOURCE_IP_PORT` algorithm —
+  Switch Cloud zhw constraint), listeners, pool, members.
+- Floating IP allocated from `floatingNetworkID`, bound to the
+  LB's VIP port; the FIP address is published back to
+  `Service.status.loadBalancer.ingress`.
+- Per-cluster Neutron security group `cozystack-lb-<cluster>` with
+  intra-SG baseline + per-Service NodePort ingress rules.
+- SG attachment to worker ports and removal of the project
+  `default` SG (full L4 isolation between clusters in the same
+  project — distinct SGs across clusters mean allow-from-same-SG
+  never crosses cluster boundaries).
+- Cleanup on `Service` delete / type-change / cluster delete via
+  finalizers + a periodic orphan sweeper.
+
+If the operator wants to keep the `default` SG (SSH from a
+jump host, monitoring scrapes), pin
+`spec.openstack.loadBalancer.workerSecurityGroupID` to an
+operator-owned SG and the controller will not touch port SG
+attachments.
 
 ## Credentials
 
