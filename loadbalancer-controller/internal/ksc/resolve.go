@@ -264,11 +264,20 @@ var openStackClusterGVR = schema.GroupVersionResource{
 	Resource: "openstackclusters",
 }
 
-// autoDiscoverNetworkID looks up the OpenStackCluster CR named after
-// the tenant and returns status.network.id (the Neutron network CAPO
-// created or attached). Returns "" without error while CAPO has not
-// populated the status yet — the caller treats that as a soft
-// misconfiguration and short-circuits the reconcile.
+// kscChartReleasePrefix matches the `release.prefix` declared in
+// cozyrds/kubernetes-switchcloud.yaml — every chart-generated object
+// (HelmRelease, OpenStackCluster, KamajiControlPlane, …) is named
+// `<prefix><cluster>`. The loadbalancer-controller refers to the
+// cluster by its short name (`mesh3`), so we have to glue the
+// prefix back on whenever we look up chart-side artefacts.
+const kscChartReleasePrefix = "kubernetes-switchcloud-"
+
+// autoDiscoverNetworkID looks up the OpenStackCluster CR
+// `<kscChartReleasePrefix><cluster>` and returns status.network.id
+// (the Neutron network CAPO created or attached). Returns "" without
+// error while CAPO has not populated the status yet — the caller
+// treats that as a soft misconfiguration and short-circuits the
+// reconcile.
 func autoDiscoverNetworkID(ctx context.Context, mgmtClient ctrlclient.Client, cluster, namespace string) (string, error) {
 	osc := &unstructured.Unstructured{}
 	osc.SetGroupVersionKind(schema.GroupVersionKind{
@@ -277,7 +286,7 @@ func autoDiscoverNetworkID(ctx context.Context, mgmtClient ctrlclient.Client, cl
 		Kind:    "OpenStackCluster",
 	})
 
-	err := mgmtClient.Get(ctx, types.NamespacedName{Namespace: namespace, Name: cluster}, osc)
+	err := mgmtClient.Get(ctx, types.NamespacedName{Namespace: namespace, Name: kscChartReleasePrefix + cluster}, osc)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
 			return "", nil
