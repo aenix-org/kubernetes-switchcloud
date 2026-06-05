@@ -156,7 +156,7 @@ func run() error {
 	// that outlived their owning Service / KSC CR. The primary
 	// cleanup paths are the CR finalizer and the per-Service
 	// finalizer; the sweeper picks up anything those miss.
-	go runOrphanSweeper(ctx, mgr.GetClient(), logger.WithName("sweeper"))
+	go runOrphanSweeper(ctx, mgr.GetClient(), tenantManager, logger.WithName("sweeper"))
 
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {
 		return errors.Wrap(err, "setting up healthz")
@@ -186,7 +186,7 @@ const sweepInterval = 10 * time.Minute
 // we currently know about. Anything whose owning cluster has gone
 // missing is torn down. Survives transient OpenStack auth failures —
 // errors are logged and the loop continues; the next tick retries.
-func runOrphanSweeper(ctx context.Context, mgmtClient ctrlclient.Client, log logr.Logger) {
+func runOrphanSweeper(ctx context.Context, mgmtClient ctrlclient.Client, tenantManager *multicluster.Manager, log logr.Logger) {
 	t := time.NewTicker(sweepInterval)
 	defer t.Stop()
 
@@ -262,7 +262,32 @@ func runOrphanSweeper(ctx context.Context, mgmtClient ctrlclient.Client, log log
 			continue
 		}
 
-		if err := openstack.SweepOrphans(ctx, clients, known); err != nil {
+		// serviceExists asks the live tenant Session whether the given
+		// Service still exists. The callback is required only for
+		// the per-Service drift branch of SweepOrphans; when there
+		// is no Session for the tenant we conservatively return
+		// (true, nil), i.e. assume the Service is alive and skip
+		// deletion — better to leak an orphan than to delete a
+		// live tenant's LB during a transient Session restart.
+		serviceExists := func(ctx context.Context, cluster, namespace, name string) (bool, error) {
+			tenantClient, present := tenantManager.TenantClient(cluster)
+			if !present {
+				return true, nil
+			}
+
+			var svc corev1.Service
+			if err := tenantClient.Get(ctx, ctrlclient.ObjectKey{Namespace: namespace, Name: name}, &svc); err != nil {
+				if apierrors.IsNotFound(err) {
+					return false, nil
+				}
+
+				return false, err
+			}
+
+			return true, nil
+		}
+
+		if err := openstack.SweepOrphans(ctx, clients, known, serviceExists); err != nil {
 			log.Error(err, "sweep cycle failed (LB/SG layer)")
 
 			continue
