@@ -34,7 +34,6 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/cluster"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
@@ -43,7 +42,7 @@ import (
 	"github.com/aenix-org/kubernetes-switchcloud/loadbalancer-controller/internal/ksc"
 	"github.com/aenix-org/kubernetes-switchcloud/loadbalancer-controller/internal/multicluster"
 	"github.com/aenix-org/kubernetes-switchcloud/loadbalancer-controller/internal/openstack"
-	"github.com/aenix-org/kubernetes-switchcloud/loadbalancer-controller/internal/restart"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
 var scheme = runtime.NewScheme()
@@ -106,31 +105,42 @@ func run() error {
 		return errors.Wrap(err, "creating manager")
 	}
 
-	registry, err := multicluster.Build(ctx, cfg, logger.WithName("registry"))
-	if err != nil {
-		return errors.Wrap(err, "building tenant cluster registry")
-	}
-
-	// Start each tenant cluster cache in its own goroutine instead of
-	// going through mgr.Add. controller-runtime treats Add'd Runnables
-	// as blocking — a single unreachable tenant (offline apiserver,
-	// stale kubeconfig, transient network blip during startup) would
-	// otherwise crash-loop the entire centralised controller and break
-	// every other tenant. Isolating the lifecycle here keeps the blast
-	// radius scoped to that one tenant. The shared context still
-	// cancels them all on SIGTERM.
-	for name, c := range registry.All() {
-		go runTenantCluster(ctx, name, c, logger)
-	}
-
-	r := &controller.ServiceReconciler{
-		Registry:   registry,
+	// Dynamic per-tenant manager. Replaces the static Registry +
+	// restart-on-Secret-change design: this Manager watches tenant
+	// kubeconfig Secrets through the mgmt cache and creates / replaces
+	// / stops per-tenant Sessions as the secret set changes, without
+	// taking the controller process down. Each Session runs its own
+	// cluster cache + Service informer + workqueue + worker; tenant
+	// failures stay isolated to that tenant.
+	tenantManager := &multicluster.Manager{
+		MgmtCache:  mgr.GetCache(),
 		MgmtClient: mgr.GetClient(),
-		Log:        logger.WithName("controller"),
+		Scheme:     scheme,
+		ReconcilerFactory: func(tenant string, tenantClient ctrlclient.Client) reconcile.Reconciler {
+			return controller.NewTenantReconciler(tenant, tenantClient, mgr.GetClient(), logger.WithName("controller").WithValues("tenant", tenant))
+		},
+		Log: logger.WithName("multicluster"),
 	}
 
-	if err := r.SetupWithManager(mgr); err != nil {
-		return errors.Wrap(err, "registering Service reconciler")
+	if err := mgr.Add(tenantManager); err != nil {
+		return errors.Wrap(err, "registering tenant Manager")
+	}
+
+	// KSC watch on management cluster. A flip on KubernetesSwitchcloud
+	// spec.openstack.loadBalancer.enabled (or AllowedCIDRs,
+	// floatingNetworkID, etc.) must ripple into every tenant Service
+	// reconciler so that toggling the feature off actually tears down
+	// the running LBs. The watch lives in the mgmt manager because the
+	// KSC CRs live there; the handler forwards work to the
+	// per-tenant Sessions via tenantManager.EnqueueAllForTenant.
+	kscWatcher := &controller.KSCWatcher{
+		MgmtClient:     mgr.GetClient(),
+		TenantManager:  tenantManager,
+		Log:            logger.WithName("ksc-watcher"),
+	}
+
+	if err := kscWatcher.SetupWithManager(mgr); err != nil {
+		return errors.Wrap(err, "registering KSC watcher")
 	}
 
 	clusterReconciler := &controller.ClusterReconciler{
@@ -142,50 +152,11 @@ func run() error {
 		return errors.Wrap(err, "registering Cluster reconciler")
 	}
 
-	// Periodic orphan sweeper — picks up OpenStack resources that
-	// outlived their owning Service / KSC CR because the controller
-	// happened to be down or somebody mutated state out-of-band. The
-	// CR-finalizer + per-Service finalizer are the primary cleanup
-	// paths; this is the safety net.
+	// Periodic orphan sweeper — safety net for OpenStack resources
+	// that outlived their owning Service / KSC CR. The primary
+	// cleanup paths are the CR finalizer and the per-Service
+	// finalizer; the sweeper picks up anything those miss.
 	go runOrphanSweeper(ctx, mgr.GetClient(), logger.WithName("sweeper"))
-
-	// Tenant-secret watcher. The multicluster.Registry is built once
-	// against the kubeconfig Secrets visible at startup, and the
-	// per-tenant cluster.Cluster objects it holds are frozen for the
-	// life of the manager (controller-runtime does not let us mutate
-	// Watches after mgr.Start). If a tenant is created, deleted, or
-	// recreated with a fresh Kamaji CA, the registry would silently
-	// keep dialling the wrong endpoint and flood the log with x509
-	// errors. The watcher fingerprints the secret set at startup,
-	// then on every Secret event recomputes; on drift it cancels the
-	// manager context so the pod exits and Kubernetes restarts us
-	// against the current state of the world. Same pattern as
-	// kilo-clustermesh-operator's restart.ChangeWatcher.
-	// Snapshot the tenant Secret set via a fresh uncached client (the
-	// manager cache only serves reads after mgr.Start, which has not
-	// happened yet) and pass it to the watcher as StartFingerprint.
-	// Any drift observed by the watcher after this point is real
-	// movement since startup, not a cache-warmup race.
-	preStartClient, err := ctrlclient.New(cfg, ctrlclient.Options{Scheme: scheme})
-	if err != nil {
-		return errors.Wrap(err, "building uncached client for startup fingerprint")
-	}
-
-	startFingerprint, err := restart.ComputeFingerprint(ctx, preStartClient)
-	if err != nil {
-		return errors.Wrap(err, "computing tenant-secret startup fingerprint")
-	}
-
-	tenantWatcher := &restart.TenantSecretWatcher{
-		Client:           mgr.GetClient(),
-		Cancel:           cancel,
-		StartFingerprint: startFingerprint,
-		Log:              logger.WithName("tenant-secret-watcher"),
-	}
-
-	if err := tenantWatcher.SetupWithManager(mgr); err != nil {
-		return errors.Wrap(err, "registering tenant-secret watcher")
-	}
 
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {
 		return errors.Wrap(err, "setting up healthz")
@@ -195,7 +166,7 @@ func run() error {
 		return errors.Wrap(err, "setting up readyz")
 	}
 
-	logger.Info("starting manager", "tenants", registry.Names())
+	logger.Info("starting manager")
 
 	if err := mgr.Start(ctx); err != nil {
 		return errors.Wrap(err, "manager exited with error")
@@ -404,18 +375,3 @@ func sweepOrphanKubeconfigSecrets(ctx context.Context, mgmtClient ctrlclient.Cli
 	return nil
 }
 
-// runTenantCluster runs a single tenant's cluster.Cluster cache. Errors
-// (apiserver unreachable, watch failures) are logged but never
-// propagated to the manager: this tenant simply produces no Service
-// events until the apiserver comes back, while every other tenant
-// keeps reconciling. Same pattern as kilo-clustermesh-operator.
-func runTenantCluster(ctx context.Context, name string, c cluster.Cluster, log logr.Logger) {
-	tenantLog := log.WithValues("tenant", name)
-
-	if err := c.Start(ctx); err != nil && ctx.Err() == nil {
-		// ctx.Err() == nil means the cancellation is coming from the
-		// cluster itself, not from a parent shutdown signal — log it
-		// as a genuine tenant failure rather than expected teardown.
-		tenantLog.Error(err, "tenant cluster cache exited with error")
-	}
-}
