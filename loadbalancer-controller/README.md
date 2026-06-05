@@ -49,39 +49,46 @@ never the token that minted it.
                 └──────────────────────┘
 ```
 
-## Versioning roadmap
+## What the controller does
 
-* **v0 (this scaffold)** — boots, discovers tenants, watches Services,
-  logs `LoadBalancer` events. No OpenStack API calls. Goal: get the
-  helm chart, image build, and platform wiring on production so the
-  Octavia integration can ship as an isolated next PR.
+For every Service of `type: LoadBalancer` in a participating tenant
+cluster the controller ensures, end-to-end:
 
-* **v1** — Octavia CRUD: ensure LB, listener per Service port, pool,
-  members synced from tenant Node IPs (or Endpoints once we wire
-  externalTrafficPolicy=Local). Patch `Service.status.loadBalancer`.
+1. **Octavia LB** (provider `ovn`) on the tenant network with a
+   listener per Service port and a pool of `(workerInternalIP, NodePort)`
+   members synced from Ready Nodes.
+2. **Floating IP** allocated from the configured external network and
+   bound to the LB's VIP port. Required in Switch Cloud zhw because
+   the project's allocations on the `public` IPv4 subnet are not
+   BGP-announced; the FIP is what reaches the public internet.
+3. **Per-cluster security group** `cozystack-lb-<cluster>` with
+   intra-SG baseline + per-Service NodePort ingress rules. The SG
+   is attached to every worker port via Neutron port update, and
+   the project `default` SG is removed — giving full L4 isolation
+   between clusters in the same OpenStack project (distinct SGs
+   mean allow-from-same-SG never crosses cluster boundaries).
+4. **Cleanup** via two finalizers (one per-Service, one on the
+   `KubernetesSwitchcloud` CR itself) plus a periodic orphan sweeper
+   that catches resources whose owning CR / Service vanished while
+   the controller was offline.
 
-* **v2** — finalizer on `KubernetesSwitchcloud` CR to cascade-delete
-  every Octavia LB attached to that tenant before Kamaji tears the
-  control plane down. Without this, deleting a tenant orphans paid
-  LB resources in OpenStack.
-
-* **v3** — Service annotations matching upstream OpenStack-CCM
-  (`loadbalancer.openstack.org/*`), UDP/SCTP listeners, multi-port
-  Services, `externalTrafficPolicy=Local` source-IP preservation.
+The FIP address is patched back into
+`Service.status.loadBalancer.ingress` so tenant users see it via
+`kubectl get svc`.
 
 ## OVN driver constraints (Switch Cloud zhw)
 
-Probed empirically (zhw lacks Amphora flavors; only OVN provider
-actually accepts LB creation):
+Probed empirically:
 
 * Algorithms: `SOURCE_IP_PORT` only. ROUND_ROBIN / LEAST_CONNECTIONS
   return 400.
 * Listener protocols: TCP, UDP, SCTP — no HTTP/HTTPS L7. K8s Services
   are L4 so this is not a limitation in practice.
-* Health monitors: PING, TCP, UDP-CONNECT — no HTTP monitors. nodePort
+* Health monitors: PING, TCP, UDP-CONNECT — no HTTP monitors. NodePort
   TCP probe is sufficient for kube-proxy backends.
-* VIP allocation: directly on the `public` external network. No
-  separate FIP step.
+* VIP placement: must be a tenant-private network, NOT directly on the
+  `public` external network. External reachability is wired via the
+  floating IP. See `floatingNetworkID` below.
 
 ## Configuration
 
@@ -95,20 +102,31 @@ Helm values (see `charts/loadbalancer-controller/values.yaml`):
 | `log.level` | `info` | one of `debug`, `info`, `warn`, `error` |
 | `log.encoding` | `json` | one of `json`, `console` |
 
-Per-tenant configuration lives on each `KubernetesSwitchcloud` CR
-(added to the CRD schema in v1):
+Per-cluster configuration lives on each `KubernetesSwitchcloud` CR:
 
 ```yaml
 spec:
   openstack:
-    # existing fields ...
+    # ... credentials, network ...
     loadBalancer:
-      enabled: false        # opt-in; default off
-      vipSubnetID: ""       # override; default: auto-pick first IPv4 subnet
-                            # of first router:external=true network
-      providerDriver: ""    # override; default "ovn"
-                            # (only OVN is currently functional in zhw)
+      enabled: false                  # opt-in per cluster
+      providerDriver: "ovn"           # only "ovn" works in Switch Cloud zhw
+      vipNetworkID: ""                # auto-discovered from OpenStackCluster.status.network.id;
+                                      # set explicitly only in legacy/override scenarios
+      floatingNetworkID: ""           # external network for FIP allocation
+                                      # (empty = internal-only LB, no public IPv4)
+      floatingSubnetID: ""            # optional pin within floatingNetworkID
+      workerSecurityGroupID: ""       # operator override; when empty the controller
+                                      # auto-creates and manages cozystack-lb-<cluster>.
+                                      # Pin to an operator-owned SG to keep the project
+                                      # default SG attached to workers (e.g. for SSH).
+      allowedCIDRs: ["0.0.0.0/0"]     # source CIDRs allowed to reach the NodePort
 ```
+
+In the typical Switch Cloud zhw setup with `spec.openstack.network.id`
+left empty (auto-managed mode), the operator needs to set only
+`enabled: true` + `floatingNetworkID: <public-net-uuid>`; everything
+else either auto-discovers or has a sensible default.
 
 ## Development
 

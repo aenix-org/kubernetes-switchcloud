@@ -16,9 +16,15 @@ openstack:
   floatingIPNetwork: ""
 
 ## @section Network
-  ## @param openstack.network.id OpenStack network ID for worker nodes
+  ## @param openstack.network.id OpenStack network ID for worker nodes (legacy mode — pre-existing Neutron network). Leave empty to enable auto-managed mode: CAPO creates a dedicated network/subnet/router per cluster on apply and deletes them on cluster delete, giving per-cluster L2/L3 isolation.
+  ## @param openstack.network.subnetCIDR IPv4 CIDR for the auto-managed worker subnet. Used only when openstack.network.id is empty.
+  ## @param openstack.network.externalNetworkID Neutron network ID used as the router's external gateway in auto-managed mode. Leave empty to let CAPO auto-discover the single project-visible external network.
+  ## @param openstack.network.dnsNameservers DNS servers wired into the auto-managed subnet's DHCP. Used only in auto-managed mode.
   network:
     id: ""
+    subnetCIDR: "10.244.0.0/24"
+    externalNetworkID: ""
+    dnsNameservers: []
 
 ## @section Kubernetes version
 ## @param version Kubernetes version string (e.g. v1.32.6)
