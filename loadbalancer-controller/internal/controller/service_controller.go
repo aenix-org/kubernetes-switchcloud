@@ -262,6 +262,16 @@ func (r *tenantServiceReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		if err := openstack.EnsureSGAttachedToWorkers(ctx, clients, workerSGID, memberIPs, cfg.VIPNetworkID); err != nil {
 			return ctrl.Result{}, errors.Wrap(err, "attaching cluster SG to worker ports")
 		}
+
+		// Strip the project default SG from worker ports so its
+		// implicit allow-from-same-default-SG rule can no longer
+		// carry traffic across clusters that share the project. Must
+		// run after EnsureSGAttachedToWorkers — that step guarantees
+		// the cluster SG is present, so detach never leaves a port
+		// with zero SGs.
+		if err := openstack.DetachDefaultSGFromWorkers(ctx, clients, memberIPs, cfg.VIPNetworkID); err != nil {
+			return ctrl.Result{}, errors.Wrap(err, "detaching default SG from worker ports")
+		}
 	}
 
 	if err := openstack.EnsureNodePortRules(ctx, clients, workerSGID, r.tenant, svc, cfg.AllowedCIDRs); err != nil {

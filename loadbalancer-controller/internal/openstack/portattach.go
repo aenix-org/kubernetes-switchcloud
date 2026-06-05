@@ -105,3 +105,79 @@ func hasSG(list []string, want string) bool {
 
 	return false
 }
+
+// DetachDefaultSGFromWorkers strips the project's "default" SG from
+// each worker port so the implicit allow-from-same-SG rule on the
+// shared default SG no longer carries traffic between workers of
+// different clusters (they all sit in the same project, and would
+// otherwise see each other through that one rule).
+//
+// Safety rails: the caller must have already attached the
+// controller-managed cluster SG via EnsureSGAttachedToWorkers before
+// calling this — we refuse to leave a port without any security group.
+// The "default" name is the OpenStack convention for the project-scoped
+// default group; the lookup is project-scoped so we never touch a
+// neighbour project's SG.
+//
+// Side effect for operators: any rule they added to the default SG
+// (SSH from a jump host, monitoring scrape ranges, etc.) no longer
+// applies to worker ports. To preserve those, mirror them into the
+// cluster-managed SG via spec.openstack.loadBalancer.allowedCIDRs +
+// matching Services, or pin workerSecurityGroupID to an operator-owned
+// SG instead (the controller will not touch port SG attachments in
+// override mode).
+func DetachDefaultSGFromWorkers(
+	ctx context.Context,
+	c *Clients,
+	memberIPs []string,
+	workerNetworkID string,
+) error {
+	if workerNetworkID == "" || len(memberIPs) == 0 {
+		return nil
+	}
+
+	defaultSG, err := findSGByName(ctx, c, "default")
+	if err != nil {
+		return errors.Wrap(err, "looking up project default SG")
+	}
+
+	if defaultSG == nil {
+		return nil
+	}
+
+	for _, ip := range memberIPs {
+		port, err := findPortByIP(ctx, c, workerNetworkID, ip)
+		if err != nil {
+			return errors.Wrapf(err, "looking up port for member %s", ip)
+		}
+
+		if port == nil {
+			continue
+		}
+
+		if !hasSG(port.SecurityGroups, defaultSG.ID) {
+			continue
+		}
+
+		newSGs := make([]string, 0, len(port.SecurityGroups))
+
+		for _, sg := range port.SecurityGroups {
+			if sg != defaultSG.ID {
+				newSGs = append(newSGs, sg)
+			}
+		}
+
+		if len(newSGs) == 0 {
+			return errors.Newf("refusing to detach default SG from port %s: it would leave the port with no SG at all (cluster SG attach must run first)", port.ID)
+		}
+
+		_, err = ports.Update(ctx, c.Network, port.ID, ports.UpdateOpts{
+			SecurityGroups: &newSGs,
+		}).Extract()
+		if err != nil {
+			return errors.Wrapf(err, "detaching default SG from worker port %s", port.ID)
+		}
+	}
+
+	return nil
+}
