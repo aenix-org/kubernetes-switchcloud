@@ -22,7 +22,7 @@ openstack:
   ## @param openstack.network.dnsNameservers DNS servers wired into the auto-managed subnet's DHCP. Used only in auto-managed mode.
   network:
     id: ""
-    subnetCIDR: "10.243.0.0/24"
+    subnetCIDR: "10.244.0.0/24"
     externalNetworkID: ""
     dnsNameservers: []
 

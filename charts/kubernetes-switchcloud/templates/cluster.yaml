@@ -278,7 +278,14 @@ spec:
   apiServerLoadBalancer:
     enabled: false
   disableAPIServerFloatingIP: true
+{{- if .Values.openstack.network.id }}
+  # Legacy mode only: the operator's pre-existing network is wired
+  # to the project's external network out-of-band, so CAPO must not
+  # try to attach a separate one. Auto-managed mode (else branch
+  # above) DOES want CAPO to attach the router's external gateway —
+  # without it managedSubnets workers have no egress.
   disableExternalNetwork: true
+{{- end }}
 {{- if .Values.openstack.floatingIPNetwork }}
 ---
 apiVersion: infrastructure.cluster.x-k8s.io/v1alpha1
