@@ -19,6 +19,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/cockroachdb/errors"
 	"github.com/go-logr/logr"
@@ -27,15 +28,16 @@ import (
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
+	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/cluster"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
-	"github.com/aenix-org/kubernetes-switchcloud/loadbalancer-controller/internal/ksc"
-
 	"github.com/aenix-org/kubernetes-switchcloud/loadbalancer-controller/internal/controller"
+	"github.com/aenix-org/kubernetes-switchcloud/loadbalancer-controller/internal/ksc"
 	"github.com/aenix-org/kubernetes-switchcloud/loadbalancer-controller/internal/multicluster"
+	"github.com/aenix-org/kubernetes-switchcloud/loadbalancer-controller/internal/openstack"
 )
 
 var scheme = runtime.NewScheme()
@@ -125,6 +127,22 @@ func run() error {
 		return errors.Wrap(err, "registering Service reconciler")
 	}
 
+	clusterReconciler := &controller.ClusterReconciler{
+		MgmtClient: mgr.GetClient(),
+		Log:        logger.WithName("cluster"),
+	}
+
+	if err := clusterReconciler.SetupWithManager(mgr); err != nil {
+		return errors.Wrap(err, "registering Cluster reconciler")
+	}
+
+	// Periodic orphan sweeper — picks up OpenStack resources that
+	// outlived their owning Service / KSC CR because the controller
+	// happened to be down or somebody mutated state out-of-band. The
+	// CR-finalizer + per-Service finalizer are the primary cleanup
+	// paths; this is the safety net.
+	go runOrphanSweeper(ctx, mgr.GetClient(), registry, logger.WithName("sweeper"))
+
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {
 		return errors.Wrap(err, "setting up healthz")
 	}
@@ -140,6 +158,74 @@ func run() error {
 	}
 
 	return nil
+}
+
+// sweepInterval is the cadence of the orphan sweeper. Long-ish on
+// purpose — primary cleanup is the per-reconcile finalizer path; this
+// loop is the safety net for "controller was down when somebody
+// deleted something" cases.
+const sweepInterval = 10 * time.Minute
+
+// runOrphanSweeper periodically asks OpenStack for the full list of
+// our managed resources and compares it against the set of clusters
+// we currently know about. Anything whose owning cluster has gone
+// missing is torn down. Survives transient OpenStack auth failures —
+// errors are logged and the loop continues; the next tick retries.
+func runOrphanSweeper(ctx context.Context, mgmtClient ctrlclient.Client, reg *multicluster.Registry, log logr.Logger) {
+	t := time.NewTicker(sweepInterval)
+	defer t.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+		}
+
+		known := make(map[string]struct{}, len(reg.Names()))
+		for _, n := range reg.Names() {
+			known[n] = struct{}{}
+		}
+
+		if len(known) == 0 {
+			// Registry not yet populated (early startup) — skip a
+			// cycle rather than sweep against an empty set, which
+			// would look like every resource is orphaned.
+			continue
+		}
+
+		// Pick any known cluster to authenticate as. All clusters in
+		// the same project share creds in the typical Switch Cloud
+		// layout — clouds.yaml lookups resolve identically. If
+		// projects diverge we'd need to iterate per-cluster; not the
+		// case today.
+		var anyCluster string
+		for n := range known {
+			anyCluster = n
+
+			break
+		}
+
+		cfg, err := ksc.Resolve(ctx, mgmtClient, anyCluster)
+		if err != nil || !cfg.Enabled {
+			continue
+		}
+
+		clients, err := openstack.NewClients(ctx, cfg.Creds)
+		if err != nil {
+			log.Error(err, "sweep: building OpenStack clients failed")
+
+			continue
+		}
+
+		if err := openstack.SweepOrphans(ctx, clients, known); err != nil {
+			log.Error(err, "sweep cycle failed")
+
+			continue
+		}
+
+		log.V(1).Info("sweep cycle complete", "knownClusters", len(known))
+	}
 }
 
 // runTenantCluster runs a single tenant's cluster.Cluster cache. Errors
