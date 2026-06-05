@@ -120,6 +120,16 @@ spec:
   talosVersion: v1.10.0
   controlPlane:
     replicas: 2
+  # IngressClass that the Kamaji-managed apiserver Ingress is annotated
+  # with. The default fallback is the parent tenant namespace name
+  # (e.g. `tenant-root`), which only works if you actually run a
+  # per-tenant Ingress controller by that name. On a stock Cozystack
+  # the host-level controller is `nginx` and you almost certainly want
+  # to point at it explicitly — otherwise the host ingress-nginx will
+  # not pick the apiserver Ingress up and the bootstrap kubelet hits
+  # the controller's fallback "ingress.local" certificate, fails the
+  # TLS handshake against the apiserver, and the worker never joins.
+  ingressClassName: nginx
   openstack:
     authURL: https://identity.api.zhw.cloud.switch.ch/v3
     regionName: zhw
