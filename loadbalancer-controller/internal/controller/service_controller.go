@@ -234,6 +234,17 @@ func (r *tenantServiceReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		publicAddr = fipAddr
 	}
 
+	if cfg.WorkerSecurityGroupID != "" {
+		if err := openstack.EnsureNodePortRules(ctx, clients, cfg.WorkerSecurityGroupID, r.tenant, svc, cfg.AllowedCIDRs); err != nil {
+			return ctrl.Result{}, errors.Wrap(err, "ensuring nodePort SG rules")
+		}
+	} else {
+		r.log.Info("workerSecurityGroupID not set; controller will not manage NodePort SG rules — external traffic may be dropped at the worker port unless an operator-managed rule already permits the NodePort",
+			"namespace", svc.Namespace,
+			"name", svc.Name,
+		)
+	}
+
 	if err := r.patchStatus(ctx, svc, publicAddr); err != nil {
 		return ctrl.Result{}, errors.Wrap(err, "patching Service status")
 	}
@@ -264,6 +275,14 @@ func (r *tenantServiceReconciler) cleanup(ctx context.Context, svc *corev1.Servi
 		clients, err := openstack.NewClients(ctx, cfg.Creds)
 		if err != nil {
 			return ctrl.Result{}, errors.Wrap(err, "building OpenStack clients for cleanup")
+		}
+
+		// Drop NodePort SG rules first — they are cheap to delete
+		// and harmless to leave behind, but tidier this way.
+		if cfg.WorkerSecurityGroupID != "" {
+			if err := openstack.DeleteNodePortRules(ctx, clients, cfg.WorkerSecurityGroupID, r.tenant, svc); err != nil {
+				return ctrl.Result{}, errors.Wrap(err, "deleting nodePort SG rules")
+			}
 		}
 
 		pending, err := openstack.DeleteLB(ctx, clients, r.tenant, svc)
