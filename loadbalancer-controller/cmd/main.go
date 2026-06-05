@@ -31,6 +31,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/client-go/rest"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
@@ -43,6 +44,7 @@ import (
 	"github.com/aenix-org/kubernetes-switchcloud/loadbalancer-controller/internal/ksc"
 	"github.com/aenix-org/kubernetes-switchcloud/loadbalancer-controller/internal/multicluster"
 	"github.com/aenix-org/kubernetes-switchcloud/loadbalancer-controller/internal/openstack"
+	"github.com/aenix-org/kubernetes-switchcloud/loadbalancer-controller/internal/restart"
 )
 
 var scheme = runtime.NewScheme()
@@ -148,6 +150,35 @@ func run() error {
 	// paths; this is the safety net.
 	go runOrphanSweeper(ctx, mgr.GetClient(), logger.WithName("sweeper"))
 
+	// Tenant-secret watcher. The multicluster.Registry is built once
+	// against the kubeconfig Secrets visible at startup, and the
+	// per-tenant cluster.Cluster objects it holds are frozen for the
+	// life of the manager (controller-runtime does not let us mutate
+	// Watches after mgr.Start). If a tenant is created, deleted, or
+	// recreated with a fresh Kamaji CA, the registry would silently
+	// keep dialling the wrong endpoint and flood the log with x509
+	// errors. The watcher fingerprints the secret set at startup,
+	// then on every Secret event recomputes; on drift it cancels the
+	// manager context so the pod exits and Kubernetes restarts us
+	// against the current state of the world. Same pattern as
+	// kilo-clustermesh-operator's restart.ChangeWatcher.
+	tenantWatcher := &restart.TenantSecretWatcher{
+		Client: mgr.GetClient(),
+		Cancel: cancel,
+		Log:    logger.WithName("tenant-secret-watcher"),
+	}
+
+	startFingerprint, err := computeStartupFingerprint(ctx, cfg, tenantWatcher)
+	if err != nil {
+		return errors.Wrap(err, "computing tenant-secret startup fingerprint")
+	}
+
+	tenantWatcher.StartFingerprint = startFingerprint
+
+	if err := tenantWatcher.SetupWithManager(mgr); err != nil {
+		return errors.Wrap(err, "registering tenant-secret watcher")
+	}
+
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {
 		return errors.Wrap(err, "setting up healthz")
 	}
@@ -176,6 +207,28 @@ const sweepInterval = 10 * time.Minute
 // we currently know about. Anything whose owning cluster has gone
 // missing is torn down. Survives transient OpenStack auth failures —
 // errors are logged and the loop continues; the next tick retries.
+// computeStartupFingerprint returns the tenant-secret fingerprint as
+// observed at startup, via an uncached client built directly off the
+// REST config. We cannot use mgr.GetClient() here: that client is
+// backed by the cache, and the cache only starts serving reads after
+// mgr.Start() (which we have not called yet). Using a fresh client
+// also guarantees the snapshot reflects the live apiserver state at
+// the exact moment we recorded it, rather than whatever shape the
+// cache happened to sync to first.
+func computeStartupFingerprint(ctx context.Context, cfg *rest.Config, w *restart.TenantSecretWatcher) (string, error) {
+	live, err := ctrlclient.New(cfg, ctrlclient.Options{Scheme: scheme})
+	if err != nil {
+		return "", errors.Wrap(err, "building uncached client for startup fingerprint")
+	}
+
+	original := w.Client
+	w.Client = live
+
+	defer func() { w.Client = original }()
+
+	return w.ComputeFingerprint(ctx)
+}
+
 func runOrphanSweeper(ctx context.Context, mgmtClient ctrlclient.Client, log logr.Logger) {
 	t := time.NewTicker(sweepInterval)
 	defer t.Stop()
