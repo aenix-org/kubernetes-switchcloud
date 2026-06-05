@@ -20,6 +20,8 @@ import (
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/cluster"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
+
+	"github.com/aenix-org/kubernetes-switchcloud/loadbalancer-controller/internal/finalizers"
 )
 
 // sessionWorkers is the per-tenant concurrency. One reconcile worker
@@ -279,12 +281,10 @@ func (s *Session) runResync(ctx context.Context) {
 	}
 }
 
-// finalizerName mirrors controller.FinalizerName. Duplicated to
-// avoid an internal/multicluster → internal/controller dependency
-// (controller imports multicluster, not the other way round). Keep
-// in sync; a divergence here means the resync would either miss
-// claimed Services or churn the workqueue on every tick.
-const finalizerName = "loadbalancer.switchcloud.aenix.io/cleanup"
+// finalizerName references the canonical finalizer constant via the
+// leaf finalizers package, which both the controller and the
+// multicluster package import. Keeps the string in exactly one place.
+const finalizerName = finalizers.Service
 
 func hasString(list []string, s string) bool {
 	for _, x := range list {

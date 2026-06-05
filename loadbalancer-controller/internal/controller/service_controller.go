@@ -32,17 +32,16 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
+	"github.com/aenix-org/kubernetes-switchcloud/loadbalancer-controller/internal/finalizers"
 	"github.com/aenix-org/kubernetes-switchcloud/loadbalancer-controller/internal/ksc"
 	"github.com/aenix-org/kubernetes-switchcloud/loadbalancer-controller/internal/openstack"
 )
 
-// FinalizerName is added to every Service the controller is responsible
-// for. Its presence is the signal that there may be an Octavia LB out
-// there that needs cleaning up before the Service object can disappear
-// from the apiserver — covers both Service deletion and type changes
-// away from LoadBalancer (where the spec we'd need to compute the LB
-// name is otherwise lost).
-const FinalizerName = "loadbalancer.switchcloud.aenix.io/cleanup"
+// FinalizerName is the alias kept for the controller package's
+// public surface. The canonical string lives in
+// internal/finalizers so internal/multicluster can reference the
+// same constant without an import cycle.
+const FinalizerName = finalizers.Service
 
 // NewTenantReconciler builds a per-tenant Service reconciler. The
 // returned reconcile.Reconciler is wired into a multicluster.Session

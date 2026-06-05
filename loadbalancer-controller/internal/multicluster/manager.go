@@ -24,6 +24,8 @@ import (
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/cluster"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
+
+	"github.com/aenix-org/kubernetes-switchcloud/loadbalancer-controller/internal/finalizers"
 )
 
 // Tenant kubeconfig Secret naming convention. Exported so callers
@@ -160,7 +162,14 @@ func (m *Manager) signal() {
 }
 
 // reconcileAll diffs the current set of tenant Secrets against the
-// live Sessions and applies the delta.
+// live Sessions and applies the delta. Session.Start and Session.Stop
+// can each take up to sessionStartTimeout to complete (cluster.Cluster
+// cache sync) and are run **outside** the sessions lock in parallel
+// so one unhealthy tenant does not block every other tenant's reconcile
+// — and crucially does not block KSCWatcher reconciles that take the
+// same lock through Manager.EnqueueAllForTenant. The lock is held only
+// long enough to take a snapshot of the diff and, at the end, to swap
+// the result of the parallel build into m.sessions.
 func (m *Manager) reconcileAll(ctx context.Context) error {
 	var secrets corev1.SecretList
 	if err := m.MgmtClient.List(ctx, &secrets, ctrlclient.InNamespace(TenantNamespace)); err != nil {
@@ -194,8 +203,15 @@ func (m *Manager) reconcileAll(ctx context.Context) error {
 		}
 	}
 
+	// Phase 1: under the lock, compute the diff and remove
+	// to-be-stopped Sessions from the map. The Sessions themselves
+	// are not stopped yet — we just stop *publishing* them via
+	// EnqueueAllForTenant so a stuck Stop does not delay a KSC event
+	// for a healthy tenant.
 	m.sessionsMu.Lock()
-	defer m.sessionsMu.Unlock()
+
+	toStop := make([]*Session, 0)
+	toBuild := make(map[string]secretSnapshot, len(desired))
 
 	for tenant, sess := range m.sessions {
 		want, present := desired[tenant]
@@ -203,11 +219,11 @@ func (m *Manager) reconcileAll(ctx context.Context) error {
 		switch {
 		case !present:
 			m.Log.Info("stopping Session for removed tenant", "tenant", tenant)
-			sess.Stop()
+			toStop = append(toStop, sess)
 			delete(m.sessions, tenant)
 		case want.hash != sess.KubeconfigHash:
 			m.Log.Info("stopping Session for changed kubeconfig", "tenant", tenant, "oldHash", sess.KubeconfigHash, "newHash", want.hash)
-			sess.Stop()
+			toStop = append(toStop, sess)
 			delete(m.sessions, tenant)
 		}
 	}
@@ -217,21 +233,91 @@ func (m *Manager) reconcileAll(ctx context.Context) error {
 			continue
 		}
 
-		sess, err := m.buildSession(tenant, want.kubeconfig, want.hash)
-		if err != nil {
-			m.Log.Error(err, "building Session", "tenant", tenant)
+		toBuild[tenant] = want
+	}
+
+	m.sessionsMu.Unlock()
+
+	// Phase 2: tear down stale Sessions in parallel. Each Stop drains
+	// its own workqueue and waits its own WaitGroup; serial execution
+	// would compound timeouts across N tenants on shutdown.
+	var stopWG sync.WaitGroup
+
+	for _, sess := range toStop {
+		stopWG.Add(1)
+
+		go func(s *Session) {
+			defer stopWG.Done()
+			s.Stop()
+		}(sess)
+	}
+
+	stopWG.Wait()
+
+	// Phase 3: build and start new Sessions in parallel. Each call
+	// is bounded by sessionStartTimeout; parallelism caps the worst
+	// case at one timeout, not N timeouts.
+	type buildResult struct {
+		tenant string
+		sess   *Session
+		err    error
+	}
+
+	results := make(chan buildResult, len(toBuild))
+
+	var startWG sync.WaitGroup
+
+	for tenant, want := range toBuild {
+		startWG.Add(1)
+
+		go func(tenant string, want secretSnapshot) {
+			defer startWG.Done()
+
+			sess, err := m.buildSession(tenant, want.kubeconfig, want.hash)
+			if err != nil {
+				results <- buildResult{tenant: tenant, err: err}
+
+				return
+			}
+
+			if err := sess.Start(ctx); err != nil {
+				sess.Stop()
+				results <- buildResult{tenant: tenant, err: err}
+
+				return
+			}
+
+			results <- buildResult{tenant: tenant, sess: sess}
+		}(tenant, want)
+	}
+
+	startWG.Wait()
+	close(results)
+
+	// Phase 4: swap successful Sessions into the map under the lock.
+	// Failed builds are logged; the next reconcile pass will retry
+	// because the desired tenant has no Session.
+	m.sessionsMu.Lock()
+	defer m.sessionsMu.Unlock()
+
+	for r := range results {
+		if r.err != nil {
+			m.Log.Error(r.err, "Session build/start failed; will retry next reconcile", "tenant", r.tenant)
 
 			continue
 		}
 
-		if err := sess.Start(ctx); err != nil {
-			m.Log.Error(err, "starting Session", "tenant", tenant)
-			sess.Stop()
+		// Edge case: a concurrent reconcileAll pass may have started
+		// its own Session for this tenant. We're behind the lock;
+		// stop the duplicate and let the previous one win.
+		if existing, present := m.sessions[r.tenant]; present {
+			r.sess.Stop()
+			_ = existing
 
 			continue
 		}
 
-		m.sessions[tenant] = sess
+		m.sessions[r.tenant] = r.sess
 	}
 
 	return nil
@@ -272,17 +358,36 @@ func (m *Manager) EnqueueAllForTenant(ctx context.Context, tenant string) error 
 		return nil
 	}
 
-	return sess.EnqueueAllLBServices(ctx, finalizerName)
+	return sess.EnqueueAllLBServices(ctx, finalizers.Service)
 }
 
 func (m *Manager) stopAll() {
 	m.sessionsMu.Lock()
-	defer m.sessionsMu.Unlock()
 
+	snapshot := make([]*Session, 0, len(m.sessions))
 	for tenant, sess := range m.sessions {
-		sess.Stop()
+		snapshot = append(snapshot, sess)
 		delete(m.sessions, tenant)
 	}
+
+	m.sessionsMu.Unlock()
+
+	// Stop in parallel: on leader loss or SIGTERM controller-runtime
+	// gives us gracefulShutdownTimeout (default 30s) to drain. Serial
+	// Stops compound — each waits its own workqueue drain — and would
+	// blow that budget on a fleet of tenants.
+	var wg sync.WaitGroup
+
+	for _, sess := range snapshot {
+		wg.Add(1)
+
+		go func(s *Session) {
+			defer wg.Done()
+			s.Stop()
+		}(sess)
+	}
+
+	wg.Wait()
 }
 
 // Tenants returns the names of currently-active tenants. Used for

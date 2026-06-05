@@ -34,7 +34,6 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/cluster"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
@@ -376,18 +375,3 @@ func sweepOrphanKubeconfigSecrets(ctx context.Context, mgmtClient ctrlclient.Cli
 	return nil
 }
 
-// runTenantCluster runs a single tenant's cluster.Cluster cache. Errors
-// (apiserver unreachable, watch failures) are logged but never
-// propagated to the manager: this tenant simply produces no Service
-// events until the apiserver comes back, while every other tenant
-// keeps reconciling. Same pattern as kilo-clustermesh-operator.
-func runTenantCluster(ctx context.Context, name string, c cluster.Cluster, log logr.Logger) {
-	tenantLog := log.WithValues("tenant", name)
-
-	if err := c.Start(ctx); err != nil && ctx.Err() == nil {
-		// ctx.Err() == nil means the cancellation is coming from the
-		// cluster itself, not from a parent shutdown signal — log it
-		// as a genuine tenant failure rather than expected teardown.
-		tenantLog.Error(err, "tenant cluster cache exited with error")
-	}
-}
