@@ -251,8 +251,16 @@ jobs:
 
       - name: Push charts
         run: |
+          # Charts go under /charts/ so they do not share an OCI tag
+          # namespace with the container images. Same-tag collision
+          # (e.g. loadbalancer-controller:0.10.3 = chart AND image)
+          # left registry-side multiplexing pick which artifact a
+          # tag resolved to and broke `kubectl exec` with "executable
+          # not found" when containerd pulled the chart instead of
+          # the image. Keep this in sync with the HelmRepository url
+          # in packages/core/platform/templates/helmcharts.yaml.
           for tgz in _dist/*.tgz; do
-            helm push "$tgz" oci://ghcr.io/aenix-org
+            helm push "$tgz" oci://ghcr.io/aenix-org/charts
           done
 
       # Build a Cozystack-package bundle OCI artifact from packages/.
