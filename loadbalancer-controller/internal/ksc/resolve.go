@@ -16,6 +16,7 @@ package ksc
 
 import (
 	"context"
+	"net/netip"
 
 	"github.com/cockroachdb/errors"
 	corev1 "k8s.io/api/core/v1"
@@ -37,12 +38,14 @@ const TenantNamespace = "tenant-root"
 // `KubernetesSwitchcloud.spec.openstack.loadBalancer` plus the
 // credentials needed to talk to OpenStack on that tenant's behalf.
 type LoadBalancerConfig struct {
-	Enabled           bool
-	ProviderDriver    string
-	VIPNetworkID      string
-	FloatingNetworkID string
-	FloatingSubnetID  string
-	Creds             openstack.Credentials
+	Enabled               bool
+	ProviderDriver        string
+	VIPNetworkID          string
+	FloatingNetworkID     string
+	FloatingSubnetID      string
+	WorkerSecurityGroupID string
+	AllowedCIDRs          []string
+	Creds                 openstack.Credentials
 
 	// MisconfiguredReason is set when the CR opts into the feature
 	// (loadBalancer.enabled=true) but a required field is missing.
@@ -113,6 +116,34 @@ func Resolve(ctx context.Context, mgmtClient ctrlclient.Client, tenant string) (
 
 	floatingSubnetID, _, _ := unstructured.NestedString(ksc.Object, "spec", "openstack", "loadBalancer", "floatingSubnetID")
 	cfg.FloatingSubnetID = floatingSubnetID
+
+	workerSGID, _, _ := unstructured.NestedString(ksc.Object, "spec", "openstack", "loadBalancer", "workerSecurityGroupID")
+	cfg.WorkerSecurityGroupID = workerSGID
+
+	rawCIDRs, _, _ := unstructured.NestedStringSlice(ksc.Object, "spec", "openstack", "loadBalancer", "allowedCIDRs")
+	if len(rawCIDRs) == 0 {
+		// Match the openAPI default — open to the world. Operators
+		// who want narrower exposure set explicit CIDRs in the CR.
+		rawCIDRs = []string{"0.0.0.0/0"}
+	}
+
+	// Canonicalize every CIDR so subsequent diff against the
+	// Neutron-returned form is stable. Neutron normalizes IPv6
+	// prefixes on store (uppercase hex, leading zeros, etc.); without
+	// this pre-pass an operator-supplied "2001:DB8::/32" would never
+	// match the listed "2001:db8::/32" and the controller would loop
+	// delete/recreate forever.
+	canon := make([]string, 0, len(rawCIDRs))
+	for _, raw := range rawCIDRs {
+		p, err := netip.ParsePrefix(raw)
+		if err != nil {
+			return nil, errors.Wrapf(err, "parsing spec.openstack.loadBalancer.allowedCIDRs[%q]", raw)
+		}
+
+		canon = append(canon, p.Masked().String())
+	}
+
+	cfg.AllowedCIDRs = canon
 
 	creds, err := resolveCredentials(ctx, mgmtClient, ksc)
 	if err != nil {

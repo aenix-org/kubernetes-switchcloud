@@ -234,6 +234,50 @@ func (r *tenantServiceReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		publicAddr = fipAddr
 	}
 
+	// Resolve which SG carries the NodePort rules. Operator override
+	// via cfg.WorkerSecurityGroupID wins; otherwise the controller
+	// auto-creates a per-cluster SG (cozystack-lb-<cluster>) with the
+	// intra-SG baseline rules in place. Distinct SGs across clusters
+	// give us L4 isolation by default — co-tenant clusters share the
+	// project but not the SG, so allow-from-same-SG never crosses
+	// cluster boundaries.
+	workerSGID := cfg.WorkerSecurityGroupID
+	controllerManagedSG := false
+
+	if workerSGID == "" {
+		sgID, err := openstack.EnsureClusterSecurityGroup(ctx, clients, r.tenant)
+		if err != nil {
+			return ctrl.Result{}, errors.Wrap(err, "ensuring cluster security group")
+		}
+
+		workerSGID = sgID
+		controllerManagedSG = true
+	}
+
+	// When the controller manages the SG it also owns attaching it to
+	// every worker port. Operator-supplied SGs are assumed to already
+	// be wired into the workers via CAPI's nodeGroups.securityGroups —
+	// touching their port attachments would race CAPI's reconciler.
+	if controllerManagedSG {
+		if err := openstack.EnsureSGAttachedToWorkers(ctx, clients, workerSGID, memberIPs, cfg.VIPNetworkID); err != nil {
+			return ctrl.Result{}, errors.Wrap(err, "attaching cluster SG to worker ports")
+		}
+
+		// Strip the project default SG from worker ports so its
+		// implicit allow-from-same-default-SG rule can no longer
+		// carry traffic across clusters that share the project. Must
+		// run after EnsureSGAttachedToWorkers — that step guarantees
+		// the cluster SG is present, so detach never leaves a port
+		// with zero SGs.
+		if err := openstack.DetachDefaultSGFromWorkers(ctx, clients, memberIPs, cfg.VIPNetworkID); err != nil {
+			return ctrl.Result{}, errors.Wrap(err, "detaching default SG from worker ports")
+		}
+	}
+
+	if err := openstack.EnsureNodePortRules(ctx, clients, workerSGID, r.tenant, svc, cfg.AllowedCIDRs); err != nil {
+		return ctrl.Result{}, errors.Wrap(err, "ensuring nodePort SG rules")
+	}
+
 	if err := r.patchStatus(ctx, svc, publicAddr); err != nil {
 		return ctrl.Result{}, errors.Wrap(err, "patching Service status")
 	}
@@ -266,6 +310,23 @@ func (r *tenantServiceReconciler) cleanup(ctx context.Context, svc *corev1.Servi
 			return ctrl.Result{}, errors.Wrap(err, "building OpenStack clients for cleanup")
 		}
 
+		// Drop NodePort SG rules first — they are cheap to delete and
+		// harmless to leave behind, but tidier this way. The SG to
+		// touch follows the same resolution rule as the create path:
+		// operator override if present, otherwise the controller's
+		// per-cluster SG (looked up by deterministic name; do NOT
+		// auto-create on cleanup).
+		cleanupSGID, err := r.resolveCleanupSGID(ctx, clients, cfg)
+		if err != nil {
+			return ctrl.Result{}, errors.Wrap(err, "resolving cleanup SG")
+		}
+
+		if cleanupSGID != "" {
+			if err := openstack.DeleteNodePortRules(ctx, clients, cleanupSGID, r.tenant, svc); err != nil {
+				return ctrl.Result{}, errors.Wrap(err, "deleting nodePort SG rules")
+			}
+		}
+
 		pending, err := openstack.DeleteLB(ctx, clients, r.tenant, svc)
 		if err != nil {
 			return ctrl.Result{}, errors.Wrap(err, "deleting Octavia LB")
@@ -279,6 +340,23 @@ func (r *tenantServiceReconciler) cleanup(ctx context.Context, svc *corev1.Servi
 	}
 
 	return r.dropFinalizer(ctx, svc)
+}
+
+// resolveCleanupSGID returns the SG ID rules should be removed from
+// during cleanup. Mirrors the create-path resolution but never
+// creates: a missing controller-managed SG means there are no rules
+// to clean up. Operator override always wins.
+func (r *tenantServiceReconciler) resolveCleanupSGID(ctx context.Context, clients *openstack.Clients, cfg *ksc.LoadBalancerConfig) (string, error) {
+	if cfg.WorkerSecurityGroupID != "" {
+		return cfg.WorkerSecurityGroupID, nil
+	}
+
+	sg, err := openstack.LookupClusterSecurityGroup(ctx, clients, r.tenant)
+	if err != nil {
+		return "", err
+	}
+
+	return sg, nil
 }
 
 func (r *tenantServiceReconciler) dropFinalizer(ctx context.Context, svc *corev1.Service) (ctrl.Result, error) {
