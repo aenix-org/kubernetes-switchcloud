@@ -6,7 +6,7 @@ metadata:
   namespace: cozy-system
 spec:
   interval: 5m
-  url: oci://ghcr.io/aenix-org/kubernetes-switchcloud
+  url: oci://ghcr.io/aenix-org/charts/kubernetes-switchcloud
   ref:
     semver: ">=0.3.0"
 ---
