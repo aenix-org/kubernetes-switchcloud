@@ -1,4 +1,7 @@
-{{- if and .Values.addons.kilo.enabled .Values.addons.kilo.clusterMesh.remoteClusters .Values._namespace.etcd }}
+{{- $localCluster := .Values.addons.kilo.clusterMesh.localCluster | default dict }}
+{{- $hasRemote := .Values.addons.kilo.clusterMesh.remoteClusters }}
+{{- $hasLocalCluster := $localCluster.name }}
+{{- if and .Values.addons.kilo.enabled (or $hasRemote $hasLocalCluster) .Values._namespace.etcd }}
 {{- /*
   A ClusterMesh is symmetric: every participating KubernetesSwitchcloud CR
   lists its peers in addons.kilo.clusterMesh.remoteClusters, so the Kilo
@@ -7,8 +10,8 @@
   there must be exactly ONE ClusterMesh resource in the shared namespace,
   otherwise kilo-clustermesh-operator's CIDR validator flags overlapping
   meshes. Pick a deterministic owner: the cluster whose Release.Name sorts
-  first among {self + all remoteClusters[*].name} is the only one that
-  emits the CR. Every other peer is silent here.
+  first among {self + all remoteClusters[*].name + localCluster.name} is
+  the only one that emits the CR. Every other peer is silent here.
 */}}
 {{- $names := list .Release.Name }}
 {{- range .Values.addons.kilo.clusterMesh.remoteClusters }}
@@ -33,7 +36,7 @@ spec:
       podCIDRs:
         - {{ .Values.network.podCIDR }}
       serviceCIDR: {{ .Values.network.serviceCIDR }}
-      wireguardCIDR: {{ required "addons.kilo.clusterMesh.localWireguardCIDR is required when clusterMesh.remoteClusters is non-empty" .Values.addons.kilo.clusterMesh.localWireguardCIDR | quote }}
+      wireguardCIDR: {{ required "addons.kilo.clusterMesh.localWireguardCIDR is required when clusterMesh is non-empty" .Values.addons.kilo.clusterMesh.localWireguardCIDR | quote }}
       wireguardPort: {{ .Values.addons.kilo.clusterMesh.wireguardPort | default 51820 }}
     {{- range .Values.addons.kilo.clusterMesh.remoteClusters }}
     - name: {{ .name }}
@@ -47,6 +50,17 @@ spec:
       serviceCIDR: {{ .serviceCIDR | quote }}
       wireguardCIDR: {{ .wireguardCIDR | quote }}
       wireguardPort: {{ .wireguardPort | default $.Values.addons.kilo.clusterMesh.wireguardPort | default 51820 }}
+    {{- end }}
+    {{- if $hasLocalCluster }}
+    - name: {{ $localCluster.name }}
+      local: true
+      podCIDRs:
+      {{- range $localCluster.podCIDRs }}
+        - {{ . | quote }}
+      {{- end }}
+      serviceCIDR: {{ $localCluster.serviceCIDR | quote }}
+      wireguardCIDR: {{ $localCluster.wireguardCIDR | quote }}
+      wireguardPort: {{ $localCluster.wireguardPort | default $.Values.addons.kilo.clusterMesh.wireguardPort | default 51820 }}
     {{- end }}
 {{- end }}
 {{- end }}
