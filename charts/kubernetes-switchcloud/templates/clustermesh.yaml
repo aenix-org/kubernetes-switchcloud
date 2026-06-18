@@ -50,6 +50,12 @@ spec:
       serviceCIDR: {{ .serviceCIDR | quote }}
       wireguardCIDR: {{ .wireguardCIDR | quote }}
       wireguardPort: {{ .wireguardPort | default $.Values.addons.kilo.clusterMesh.wireguardPort | default 51820 }}
+      {{- with .additionalCIDRs }}
+      additionalCIDRs:
+      {{- range . }}
+        - {{ . | quote }}
+      {{- end }}
+      {{- end }}
     {{- end }}
     {{- if $hasLocalCluster }}
     - name: {{ $localCluster.name }}
