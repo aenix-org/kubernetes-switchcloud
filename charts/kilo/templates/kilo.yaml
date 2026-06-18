@@ -39,7 +39,9 @@ spec:
         - --subnet={{ . }}
         {{- end }}
         - --mtu={{ .Values.kilo.mtu | default "auto" }}
-        - --internal-cidr=$(NODE_IP)/32
+        {{- with .Values.kilo.internalCIDR }}
+        - --internal-cidr={{ . }}
+        {{- end }}
         env:
         - name: NODE_NAME
           valueFrom:
