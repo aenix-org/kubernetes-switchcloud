@@ -17,6 +17,10 @@ kilo:
   # Useful when status.hostIP reflects the WireGuard (kilo0) IP instead of the
   # real node interface IP, causing Kilo to fail with "no valid IP was found".
   # Example: internalCIDR: "10.244.0.0/24"
+  # internalCIDR restricts Kilo's node IP auto-detection to the given CIDR.
+  # Leave empty (default) to let Kilo detect the real node IP automatically —
+  # kilo0 is already excluded via the ignore list so no explicit CIDR is needed
+  # for typical deployments.
   internalCIDR: ""
   # Cilium is the CNI in switchcloud tenant clusters; Kilo must run in
   # compatibility mode so it does not fight Cilium for the dataplane and
