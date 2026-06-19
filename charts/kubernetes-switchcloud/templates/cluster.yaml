@@ -8,6 +8,19 @@ kubeReservedCpu, evictionHardMemory, evictionSoftMemory (plus the standard $ roo
 generateType: worker
 talosVersion: {{ $.Values.talosVersion }}
 configPatches:
+  # Pin kubelet node IP to the OpenStack subnet so it always selects eth0
+  # and never latches onto the Kilo WireGuard overlay (kilo0). Without this,
+  # once Kilo brings up kilo0, a kubelet restart picks kilo0's IP as
+  # InternalIP because it wins the interface enumeration order, causing
+  # --internal-cidr=$(NODE_IP)/32 to resolve to the WireGuard subnet and
+  # crashing subsequent Kilo restarts with "no valid IP was found".
+  {{- if $.Values.openstack.network.subnetCIDR }}
+  - op: add
+    path: /machine/kubelet/nodeIP
+    value:
+      validSubnets:
+        - {{ $.Values.openstack.network.subnetCIDR }}
+  {{- end }}
   - op: add
     path: /machine/kubelet/extraArgs
     value:
