@@ -1,0 +1,30 @@
+image:
+  repository: ghcr.io/cozystack/kilo-clustermesh-operator
+  # tag defaults to appVersion when empty
+  tag: ""
+  pullPolicy: IfNotPresent
+
+replicaCount: 1
+
+leaderElect: true
+
+metricsBindAddress: ":8080"
+metricsSecure: false
+healthProbeBindAddress: ":8081"
+
+resources:
+  limits:
+    cpu: 500m
+    memory: 128Mi
+  requests:
+    cpu: 10m
+    memory: 64Mi
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}

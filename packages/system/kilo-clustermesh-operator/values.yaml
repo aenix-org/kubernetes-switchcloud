@@ -1,0 +1,8 @@
+# Overrides for the kilo-clustermesh-operator subchart vendored under ./charts.
+# The subchart's own defaults are used as-is unless overridden here:
+#   image.repository: ghcr.io/cozystack/kilo-clustermesh-operator
+#   image.tag:        "" (falls back to the chart appVersion)
+#
+# Refresh the vendored chart with `make update` (bumps CHART_VERSION in the
+# Makefile to pull a newer operator release).
+kilo-clustermesh-operator: {}

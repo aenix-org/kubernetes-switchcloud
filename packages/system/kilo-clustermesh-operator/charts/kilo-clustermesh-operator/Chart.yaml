@@ -1,0 +1,16 @@
+apiVersion: v2
+appVersion: 0.6.0
+description: Kubernetes ClusterMesh operator for Kilo - connects clusters via WireGuard
+  mesh
+keywords:
+- kilo
+- wireguard
+- clustermesh
+- operator
+- networking
+maintainers:
+- email: arsolitt@gmail.com
+  name: Arsolitt
+name: kilo-clustermesh-operator
+type: application
+version: 0.6.0
