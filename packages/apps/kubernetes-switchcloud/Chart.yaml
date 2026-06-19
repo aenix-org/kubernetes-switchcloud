@@ -1,10 +1,15 @@
 apiVersion: v2
-name: kubernetes-switchcloud
+name: cozy-kubernetes-switchcloud
 description: Managed Kubernetes service on Switch Cloud (OpenStack + Talos)
 type: application
-version: 0.8.1
+version: 0.0.0 # Placeholder, the actual version will be automatically set during the build process
 appVersion: "1.32.6"
 annotations:
+  # NOTE: these reference externally-published charts at fixed OCI tags
+  # (oci://ghcr.io/aenix-org/<name>:<version>), which is what the live tenant
+  # OCIRepositories resolve from — NOT this repo's /charts/ publish. They are
+  # intentionally NOT renamed to cozy-* / not stamped to the repo version.
+  # Reconcile separately if/when these sub-charts move into packages/.
   talos-csr-signer/chart-url: "oci://ghcr.io/aenix-org/talos-csr-signer"
   talos-csr-signer/chart-version: "0.3.0"
   provider-id-setter/chart-url: "oci://ghcr.io/aenix-org/provider-id-setter"

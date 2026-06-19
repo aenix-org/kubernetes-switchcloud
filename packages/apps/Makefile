@@ -1,4 +1,4 @@
-OUT=../../_out/repos/system
+OUT=../../_out/repos/apps
 CHARTS := $(shell grep -F 'version: 0.0.0' */Chart.yaml | cut -f1 -d/)
 VERSIONED_CHARTS := $(shell grep '^version:' */Chart.yaml | grep -Fv '0.0.0' | cut -f1 -d/)
 

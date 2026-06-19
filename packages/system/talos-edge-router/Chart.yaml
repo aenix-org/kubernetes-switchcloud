@@ -1,6 +1,6 @@
 apiVersion: v2
-name: talos-edge-router
+name: cozy-talos-edge-router
 description: SNI-based TCP proxy that routes per-cluster traffic (trustd, konnectivity) to in-cluster backends
 type: application
-version: 0.4.0
+version: 0.0.0 # Placeholder, the actual version will be automatically set during the build process
 appVersion: "0.8.9"

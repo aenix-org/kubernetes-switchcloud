@@ -1,6 +1,0 @@
-apiVersion: v2
-name: talos-csr-signer
-description: Talos trustd gRPC server for hosted control plane clusters
-type: application
-version: 0.3.0
-appVersion: "0.5.0"

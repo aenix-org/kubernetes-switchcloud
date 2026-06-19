@@ -1,5 +1,5 @@
 ## @section Talos edge router
-## Pass-through to the talos-edge-router chart (charts/talos-edge-router).
+## Pass-through to the talos-edge-router chart (packages/system/talos-edge-router).
 ## Use to switch the Service from ClusterIP + ipsync-managed externalIPs to a
 ## LoadBalancer Service whose public IP is owned by an external LB controller
 ## (MetalLB IP-sharing with ingress-nginx is the driving case).

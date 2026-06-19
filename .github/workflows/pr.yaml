@@ -20,7 +20,7 @@ jobs:
 
       - name: Lint kubernetes-switchcloud
         run: |
-          helm lint charts/kubernetes-switchcloud/ \
+          helm lint packages/apps/kubernetes-switchcloud/ \
             --set '_namespace.etcd=etcd-test' \
             --set '_namespace.ingress=nginx' \
             --set '_namespace.host=tenant.example.com' \
@@ -31,25 +31,25 @@ jobs:
             --set 'openstack.network.id=80dcf0aa-0000'
 
       - name: Lint provider-id-setter
-        run: helm lint charts/provider-id-setter/
+        run: helm lint packages/system/provider-id-setter/
 
       - name: Lint talos-edge-router
-        run: helm lint charts/talos-edge-router/
+        run: helm lint packages/system/talos-edge-router/
 
       - name: Lint tenant-apiserver-proxy
-        run: helm lint charts/tenant-apiserver-proxy/ --set 'upstream=test.example.com:443'
+        run: helm lint packages/system/tenant-apiserver-proxy/ --set 'upstream=test.example.com:443'
 
       - name: Lint talos-csr-signer
         run: |
-          helm lint charts/talos-csr-signer/ \
+          helm lint packages/system/talos-csr-signer/ \
             --set 'clusterHostname=test.example.com' \
             --set 'talosBundleSecret=test-bundle'
 
       - name: Lint capi-bootstrap-talos
-        run: helm lint charts/capi-bootstrap-talos/
+        run: helm lint packages/system/capi-bootstrap-talos/
 
       - name: Lint capi-infraprovider-openstack
-        run: helm lint charts/capi-infraprovider-openstack/
+        run: helm lint packages/system/capi-infraprovider-openstack/
 
       - name: Lint platform chart
         run: helm lint packages/core/platform/

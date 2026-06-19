@@ -18,8 +18,8 @@ metadata:
   name: kubernetes-switchcloud-capi-bootstrap-talos
   namespace: cozy-public
 spec:
-  chart: capi-bootstrap-talos
-  version: "0.1.x"
+  chart: cozy-capi-bootstrap-talos
+  version: ">=0.0.0-0"
   sourceRef:
     kind: HelmRepository
     name: kubernetes-switchcloud
@@ -32,8 +32,8 @@ metadata:
   name: kubernetes-switchcloud-capi-infraprovider-openstack
   namespace: cozy-public
 spec:
-  chart: capi-infraprovider-openstack
-  version: "0.1.x"
+  chart: cozy-capi-infraprovider-openstack
+  version: ">=0.0.0-0"
   sourceRef:
     kind: HelmRepository
     name: kubernetes-switchcloud
@@ -46,8 +46,8 @@ metadata:
   name: kubernetes-switchcloud-talos-edge-router
   namespace: cozy-public
 spec:
-  chart: talos-edge-router
-  version: "0.3.x"
+  chart: cozy-talos-edge-router
+  version: ">=0.0.0-0"
   sourceRef:
     kind: HelmRepository
     name: kubernetes-switchcloud
@@ -60,16 +60,14 @@ metadata:
   name: kubernetes-switchcloud-loadbalancer-controller
   namespace: cozy-public
 spec:
-  chart: loadbalancer-controller
-  # Pinned to 0.10.x: CI publishes the controller image at the
-  # git-tag value (e.g. v0.10.0 -> ghcr.io/aenix-org/loadbalancer-controller:0.10.0),
-  # and Helm charts share the same OCI repo path. An unconstrained
-  # `0.x` would pick the highest semver in the namespace, which can
-  # be a container-image tag (not a chart) and fail on mediatype.
-  # Keep this in sync with charts/loadbalancer-controller/Chart.yaml
-  # `version` — bump the constraint major/minor whenever the chart
-  # crosses that boundary.
-  version: "0.10.x"
+  chart: cozy-loadbalancer-controller
+  # The chart ships with a 0.0.0 placeholder version that the build
+  # stamps to the repository release version (see the `repo` target in
+  # packages/system/Makefile). `>=0.0.0-0` therefore matches whatever
+  # version was built and published to oci://ghcr.io/aenix-org/charts.
+  # Charts live under /charts/ so they no longer share an OCI tag
+  # namespace with the loadbalancer-controller container image.
+  version: ">=0.0.0-0"
   sourceRef:
     kind: HelmRepository
     name: kubernetes-switchcloud
