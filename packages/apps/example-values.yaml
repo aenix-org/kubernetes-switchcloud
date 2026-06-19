@@ -34,6 +34,26 @@ addons:
     enabled: false
   metricsServer:
     enabled: true
+  kilo:
+    enabled: true
+    clusterMesh:
+      # WireGuard CIDR for this cluster. Joined with network.podCIDR and
+      # network.serviceCIDR into this cluster's allowedNetworks entry.
+      localWireguardCIDR: "10.4.0.0/16"
+      wireguardPort: 51820
+      remoteClusters:
+        # Example: mesh with an external Ceph cluster so tenant workloads
+        # can reach its mons/OSDs. allowedNetworks is the flat union of every
+        # CIDR reachable through that peer (kilo-clustermesh-operator 0.6.0).
+        - name: ceph
+          kubeconfigSecretName: ceph-admin-kubeconfig
+          kubeconfigSecretKey: super-admin.conf
+          allowedNetworks:
+            - "10.10.0.0/16"   # ceph pod CIDR
+            - "10.20.0.0/16"   # ceph service CIDR
+            - "10.5.0.0/16"    # ceph WireGuard CIDR
+            - "192.168.100.0/24" # ceph public storage network
+          wireguardPort: 51820
 
 _namespace:
   etcd: "etcd-tenant-root"

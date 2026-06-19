@@ -20,3 +20,20 @@ talosEdgeRouter:
     type: ClusterIP
     loadBalancerIP: ""
     annotations: {}
+
+## @section Kilo ClusterMesh operator
+## Pass-through to the kilo-clustermesh-operator chart
+## (packages/system/kilo-clustermesh-operator). Reconciles ClusterMesh
+## (kilo.squat.ai/v1alpha1) resources emitted by KubernetesSwitchcloud
+## tenants into cross-cluster WireGuard Peer objects.
+##
+## Empty by default so the operator runs with its own chart defaults.
+## Override to tune image, replicas, resources, leader election, etc.:
+##
+##   kiloClustermeshOperator:
+##     replicaCount: 1
+##     resources:
+##       requests:
+##         cpu: 10m
+##         memory: 64Mi
+kiloClustermeshOperator: {}

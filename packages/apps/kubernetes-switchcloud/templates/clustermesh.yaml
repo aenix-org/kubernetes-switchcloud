@@ -12,6 +12,12 @@
   meshes. Pick a deterministic owner: the cluster whose Release.Name sorts
   first among {self + all remoteClusters[*].name + localCluster.name} is
   the only one that emits the CR. Every other peer is silent here.
+
+  kilo-clustermesh-operator 0.6.0 flattened the per-cluster CIDR fields
+  (podCIDRs / serviceCIDR / wireguardCIDR / additionalCIDRs) into a single
+  spec.clusters[].allowedNetworks list. Remote and management peers now
+  carry that list verbatim from values; the self entry is still derived
+  from this release's network.* CIDRs and the local WireGuard CIDR.
 */}}
 {{- $names := list .Release.Name }}
 {{- range .Values.addons.kilo.clusterMesh.remoteClusters }}
@@ -29,49 +35,41 @@ metadata:
     cozystack.io/target-cluster-name: {{ .Release.Name }}
 spec:
   clusters:
+    {{- /* self / this KubernetesSwitchcloud cluster: union of pod, service and WireGuard CIDRs */}}
+    {{- $selfNetworks := list .Values.network.podCIDR .Values.network.serviceCIDR (required "addons.kilo.clusterMesh.localWireguardCIDR is required when clusterMesh is non-empty" .Values.addons.kilo.clusterMesh.localWireguardCIDR) }}
     - name: {{ .Release.Name }}
       kubeconfigSecretRef:
         name: {{ .Release.Name }}-admin-kubeconfig
         key: super-admin.conf
-      podCIDRs:
-        - {{ .Values.network.podCIDR }}
-      serviceCIDR: {{ .Values.network.serviceCIDR }}
-      wireguardCIDR: {{ required "addons.kilo.clusterMesh.localWireguardCIDR is required when clusterMesh is non-empty" .Values.addons.kilo.clusterMesh.localWireguardCIDR | quote }}
+      allowedNetworks:
+      {{- range $selfNetworks }}
+        - {{ . | quote }}
+      {{- end }}
       wireguardPort: {{ .Values.addons.kilo.clusterMesh.wireguardPort | default 51820 }}
     {{- range .Values.addons.kilo.clusterMesh.remoteClusters }}
     - name: {{ .name }}
       kubeconfigSecretRef:
         name: {{ .kubeconfigSecretName }}
         key: {{ .kubeconfigSecretKey | default "super-admin.conf" }}
-      podCIDRs:
-      {{- range .podCIDRs }}
+      allowedNetworks:
+      {{- range (required (printf "addons.kilo.clusterMesh.remoteClusters[%s].allowedNetworks is required" .name) .allowedNetworks) }}
         - {{ . | quote }}
       {{- end }}
-      serviceCIDR: {{ .serviceCIDR | quote }}
-      wireguardCIDR: {{ .wireguardCIDR | quote }}
       wireguardPort: {{ .wireguardPort | default $.Values.addons.kilo.clusterMesh.wireguardPort | default 51820 }}
-      {{- with .additionalCIDRs }}
-      additionalCIDRs:
-      {{- range . }}
-        - {{ . | quote }}
-      {{- end }}
+      {{- with .persistentKeepalive }}
+      persistentKeepalive: {{ . }}
       {{- end }}
     {{- end }}
     {{- if $hasLocalCluster }}
     - name: {{ $localCluster.name }}
       local: true
-      podCIDRs:
-      {{- range $localCluster.podCIDRs }}
+      allowedNetworks:
+      {{- range (required "addons.kilo.clusterMesh.localCluster.allowedNetworks is required when localCluster is set" $localCluster.allowedNetworks) }}
         - {{ . | quote }}
       {{- end }}
-      serviceCIDR: {{ $localCluster.serviceCIDR | quote }}
-      wireguardCIDR: {{ $localCluster.wireguardCIDR | quote }}
       wireguardPort: {{ $localCluster.wireguardPort | default $.Values.addons.kilo.clusterMesh.wireguardPort | default 51820 }}
-      {{- with $localCluster.additionalCIDRs }}
-      additionalCIDRs:
-      {{- range . }}
-        - {{ . | quote }}
-      {{- end }}
+      {{- with $localCluster.persistentKeepalive }}
+      persistentKeepalive: {{ . }}
       {{- end }}
     {{- end }}
 {{- end }}

@@ -57,6 +57,20 @@ spec:
 apiVersion: source.toolkit.fluxcd.io/v1
 kind: HelmChart
 metadata:
+  name: kubernetes-switchcloud-kilo-clustermesh-operator
+  namespace: cozy-public
+spec:
+  chart: cozy-kilo-clustermesh-operator
+  version: ">=0.0.0-0"
+  sourceRef:
+    kind: HelmRepository
+    name: kubernetes-switchcloud
+    namespace: cozy-public
+  interval: 5m
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmChart
+metadata:
   name: kubernetes-switchcloud-loadbalancer-controller
   namespace: cozy-public
 spec:

@@ -28,6 +28,37 @@ spec:
     {{- toYaml . | nindent 4 }}
   {{- end }}
 ---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: cozy-kilo-clustermesh-operator
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: kilo-clustermesh-operator
+  namespace: cozy-kilo-clustermesh-operator
+spec:
+  interval: 5m
+  releaseName: kilo-clustermesh-operator
+  targetNamespace: cozy-kilo-clustermesh-operator
+  chartRef:
+    kind: HelmChart
+    name: kubernetes-switchcloud-kilo-clustermesh-operator
+    namespace: cozy-public
+  install:
+    crds: CreateReplace
+    remediation:
+      retries: -1
+  upgrade:
+    crds: CreateReplace
+    remediation:
+      retries: -1
+  {{- with .Values.kiloClustermeshOperator }}
+  values:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+---
 apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
 metadata:
