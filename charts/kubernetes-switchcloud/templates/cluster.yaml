@@ -14,7 +14,7 @@ configPatches:
   # InternalIP because it wins the interface enumeration order, causing
   # --internal-cidr=$(NODE_IP)/32 to resolve to the WireGuard subnet and
   # crashing subsequent Kilo restarts with "no valid IP was found".
-  {{- if $.Values.openstack.network.subnetCIDR }}
+  {{- if and $.Values.openstack.network.subnetCIDR (not $.Values.openstack.network.id) }}
   - op: add
     path: /machine/kubelet/nodeIP
     value:
