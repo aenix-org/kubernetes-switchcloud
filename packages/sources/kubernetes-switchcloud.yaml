@@ -12,6 +12,6 @@ spec:
     - name: cozy-capi-infraprovider-openstack
       version: ">=0.0.0-0"
       type: system
-    - name: cozy-kubernetes-switchcloud
+    - name: kubernetes-switchcloud
       version: ">=0.0.0-0"
       type: app
