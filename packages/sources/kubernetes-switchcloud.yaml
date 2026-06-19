@@ -6,12 +6,12 @@ metadata:
 spec:
   url: oci://docker.io/999669
   charts:
-    - name: capi-bootstrap-talos
-      version: ">=0.1.0"
+    - name: cozy-capi-bootstrap-talos
+      version: ">=0.0.0-0"
       type: system
-    - name: capi-infraprovider-openstack
-      version: ">=0.1.0"
+    - name: cozy-capi-infraprovider-openstack
+      version: ">=0.0.0-0"
       type: system
-    - name: kubernetes-switchcloud
-      version: ">=0.1.0"
+    - name: cozy-kubernetes-switchcloud
+      version: ">=0.0.0-0"
       type: app

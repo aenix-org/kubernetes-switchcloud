@@ -2,5 +2,6 @@
 charts/*/charts/
 _dist/
 _packages/
+_out/
 # compiled Go binaries
 fip-reconciler/fip-reconciler

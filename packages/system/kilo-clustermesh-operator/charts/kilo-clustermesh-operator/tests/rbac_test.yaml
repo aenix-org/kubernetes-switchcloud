@@ -1,0 +1,192 @@
+suite: rbac
+tests:
+  - it: ClusterRole should have rules for nodes
+    template: clusterrole.yaml
+    asserts:
+      - isKind:
+          of: ClusterRole
+      - contains:
+          path: rules
+          content:
+            apiGroups:
+              - ""
+            resources:
+              - nodes
+            verbs:
+              - get
+              - list
+              - watch
+              - patch
+
+  - it: ClusterRole should have rules for clustermeshes
+    template: clusterrole.yaml
+    asserts:
+      - contains:
+          path: rules
+          content:
+            apiGroups:
+              - kilo.squat.ai
+            resources:
+              - clustermeshes
+            verbs:
+              - get
+              - list
+              - watch
+              - update
+              - patch
+
+  - it: ClusterRole should have rules for clustermeshes/status
+    template: clusterrole.yaml
+    asserts:
+      - contains:
+          path: rules
+          content:
+            apiGroups:
+              - kilo.squat.ai
+            resources:
+              - clustermeshes/status
+            verbs:
+              - get
+              - update
+              - patch
+
+  - it: ClusterRole should have rules for clustermeshes/finalizers
+    template: clusterrole.yaml
+    asserts:
+      - contains:
+          path: rules
+          content:
+            apiGroups:
+              - kilo.squat.ai
+            resources:
+              - clustermeshes/finalizers
+            verbs:
+              - update
+
+  - it: ClusterRole should have rules for secrets
+    template: clusterrole.yaml
+    asserts:
+      - contains:
+          path: rules
+          content:
+            apiGroups:
+              - ""
+            resources:
+              - secrets
+            verbs:
+              - get
+              - list
+              - watch
+
+  - it: ClusterRole should have rules for events
+    template: clusterrole.yaml
+    asserts:
+      - contains:
+          path: rules
+          content:
+            apiGroups:
+              - ""
+            resources:
+              - events
+            verbs:
+              - create
+              - patch
+
+  - it: ClusterRole should have rules for events.k8s.io events
+    template: clusterrole.yaml
+    asserts:
+      - contains:
+          path: rules
+          content:
+            apiGroups:
+              - events.k8s.io
+            resources:
+              - events
+            verbs:
+              - create
+              - patch
+
+  - it: ClusterRole should have rules for peers
+    template: clusterrole.yaml
+    asserts:
+      - contains:
+          path: rules
+          content:
+            apiGroups:
+              - kilo.squat.ai
+            resources:
+              - peers
+            verbs:
+              - get
+              - list
+              - watch
+              - create
+              - update
+              - patch
+              - delete
+
+  - it: ClusterRole should have rules for CRDs
+    template: clusterrole.yaml
+    asserts:
+      - contains:
+          path: rules
+          content:
+            apiGroups:
+              - apiextensions.k8s.io
+            resources:
+              - customresourcedefinitions
+            verbs:
+              - get
+              - create
+              - update
+
+  - it: ClusterRole should have rules for leases
+    template: clusterrole.yaml
+    asserts:
+      - contains:
+          path: rules
+          content:
+            apiGroups:
+              - coordination.k8s.io
+            resources:
+              - leases
+            verbs:
+              - get
+              - create
+              - update
+
+  - it: ClusterRoleBinding should reference correct ServiceAccount
+    template: clusterrolebinding.yaml
+    release:
+      name: my-release
+      namespace: test-ns
+    asserts:
+      - isKind:
+          of: ClusterRoleBinding
+      - contains:
+          path: subjects
+          content:
+            kind: ServiceAccount
+            name: my-release-kilo-clustermesh-operator
+            namespace: test-ns
+      - equal:
+          path: roleRef.kind
+          value: ClusterRole
+      - equal:
+          path: roleRef.name
+          value: my-release-kilo-clustermesh-operator
+
+  - it: ClusterRoleBinding should use custom serviceaccount name when specified
+    template: clusterrolebinding.yaml
+    release:
+      name: my-release
+      namespace: test-ns
+    set:
+      serviceAccount.name: custom-sa
+    asserts:
+      - contains:
+          path: subjects
+          content:
+            kind: ServiceAccount
+            name: custom-sa
+            namespace: test-ns

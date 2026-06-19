@@ -92,7 +92,7 @@ Probed empirically:
 
 ## Configuration
 
-Helm values (see `charts/loadbalancer-controller/values.yaml`):
+Helm values (see `packages/system/loadbalancer-controller/values.yaml`):
 
 | key | default | notes |
 |---|---|---|

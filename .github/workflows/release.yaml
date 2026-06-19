@@ -242,10 +242,35 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Compute chart version
+        id: chartver
+        run: |
+          # 0.0.0-placeholder packages are stamped to the repository
+          # release version (mirrors the `repo` target in
+          # packages/{system,apps}/Makefile). On a tag push that is the
+          # tag value; otherwise the platform chart version + sha suffix.
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            ver="${GITHUB_REF#refs/tags/v}"
+          else
+            ver=$(awk '/^version:/ {gsub(/"/, "", $2); print $2}' packages/core/platform/Chart.yaml)
+            ver="${ver}-sha-${GITHUB_SHA::8}"
+          fi
+          echo "value=$ver" >> "$GITHUB_OUTPUT"
+
       - name: Package charts
         run: |
-          for dir in charts/*/; do
-            helm package "$dir" --destination _dist/
+          VERSION="${{ steps.chartver.outputs.value }}"
+          mkdir -p _dist
+          # Package every package under packages/{system,apps}. Charts
+          # carrying the 0.0.0 placeholder are stamped to $VERSION; any
+          # chart pinned to a real version is packaged as-is.
+          for dir in packages/system/*/ packages/apps/*/; do
+            [ -f "$dir/Chart.yaml" ] || continue
+            if grep -q '^version: 0.0.0' "$dir/Chart.yaml"; then
+              helm package "$dir" --destination _dist/ --version "$VERSION"
+            else
+              helm package "$dir" --destination _dist/
+            fi
           done
           helm package packages/core/platform/ --destination _dist/
 
@@ -270,21 +295,10 @@ jobs:
       - name: Install flux CLI
         uses: fluxcd/flux2/action@main
 
-      - name: Compute bundle tag
-        id: bundletag
-        run: |
-          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
-            ver="${GITHUB_REF#refs/tags/v}"
-          else
-            ver=$(awk '/^version:/ {gsub(/"/, "", $2); print $2}' packages/core/platform/Chart.yaml)
-            ver="${ver}-sha-${GITHUB_SHA::8}"
-          fi
-          echo "value=$ver" >> "$GITHUB_OUTPUT"
-
       - name: Push Cozystack package bundle
         run: |
           flux push artifact \
-            "oci://ghcr.io/aenix-org/kubernetes-switchcloud-platform-packages:${{ steps.bundletag.outputs.value }}" \
+            "oci://ghcr.io/aenix-org/kubernetes-switchcloud-platform-packages:${{ steps.chartver.outputs.value }}" \
             --path=packages \
             --source="${{ github.server_url }}/${{ github.repository }}" \
-            --revision="${{ steps.bundletag.outputs.value }}@sha1:${{ github.sha }}"
+            --revision="${{ steps.chartver.outputs.value }}@sha1:${{ github.sha }}"

@@ -349,13 +349,18 @@ Set `minReplicas: 0` on node groups to enable scale-to-zero.
 ## Repository layout
 
 ```text
-charts/
+packages/apps/
   kubernetes-switchcloud/         Main application chart (CAPI cluster + addons)
+packages/system/
   capi-bootstrap-talos/           CAPI Talos bootstrap provider
   capi-infraprovider-openstack/   CAPI OpenStack infrastructure provider
   talos-edge-router/              SNI proxy — per-cluster routing for trustd CSR and konnectivity
   talos-csr-signer/               Per-cluster Talos certificate signer
+  tenant-apiserver-proxy/         Per-node TLS SNI-injecting proxy for tenant apiserver routing
   provider-id-setter/             DaemonSet — sets spec.providerID from OpenStack IMDS
+  loadbalancer-controller/        Centralised OpenStack LoadBalancer provisioner chart
+  kilo/                           Kilo WireGuard mesh for tenant clusters
+  kilo-clustermesh-operator/      ClusterMesh operator for cross-cluster Kilo peering
 packages/core/platform/           Platform Helm chart (installed by init.yaml)
 packages/apps/example-values.yaml Example cluster values
 init.yaml                         Bootstrap — apply once to register the package

@@ -1,0 +1,205 @@
+suite: deployment
+templates:
+  - deployment.yaml
+tests:
+  - it: should render deployment with correct image when tag is set
+    set:
+      image.repository: ghcr.io/squat/kilo-clustermesh-operator
+      image.tag: "v0.1.0"
+    asserts:
+      - isKind:
+          of: Deployment
+      - equal:
+          path: spec.template.spec.containers[0].image
+          value: "ghcr.io/squat/kilo-clustermesh-operator:v0.1.0"
+
+  - it: should use appVersion when image tag is empty
+    set:
+      image.repository: ghcr.io/squat/kilo-clustermesh-operator
+      image.tag: ""
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].image
+          value: "ghcr.io/squat/kilo-clustermesh-operator:0.1.0"
+
+  - it: should set replicas from values
+    set:
+      replicaCount: 2
+    asserts:
+      - equal:
+          path: spec.replicas
+          value: 2
+
+  - it: should pass --leader-elect=true when leaderElect is true
+    set:
+      leaderElect: true
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--leader-elect=true"
+
+  - it: should pass --leader-elect=false when leaderElect is false
+    set:
+      leaderElect: false
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--leader-elect=false"
+
+  - it: should pass --metrics-bind-address from values
+    set:
+      metricsBindAddress: ":9090"
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--metrics-bind-address=:9090"
+
+  - it: should pass --metrics-secure=false by default
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--metrics-secure=false"
+
+  - it: should pass --metrics-secure=true when enabled
+    set:
+      metricsSecure: true
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--metrics-secure=true"
+
+  - it: should pass --health-probe-bind-address from values
+    set:
+      healthProbeBindAddress: ":9091"
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--health-probe-bind-address=:9091"
+
+  - it: should set runAsNonRoot in securityContext
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].securityContext.runAsNonRoot
+          value: true
+
+  - it: should set runAsUser 65532 in securityContext
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].securityContext.runAsUser
+          value: 65532
+
+  - it: should set resource limits and requests
+    set:
+      resources.limits.cpu: "1"
+      resources.limits.memory: "256Mi"
+      resources.requests.cpu: "50m"
+      resources.requests.memory: "128Mi"
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].resources.limits.cpu
+          value: "1"
+      - equal:
+          path: spec.template.spec.containers[0].resources.limits.memory
+          value: "256Mi"
+      - equal:
+          path: spec.template.spec.containers[0].resources.requests.cpu
+          value: "50m"
+      - equal:
+          path: spec.template.spec.containers[0].resources.requests.memory
+          value: "128Mi"
+
+  - it: should apply nodeSelector when set
+    set:
+      nodeSelector:
+        kubernetes.io/os: linux
+    asserts:
+      - equal:
+          path: spec.template.spec.nodeSelector
+          value:
+            kubernetes.io/os: linux
+
+  - it: should apply tolerations when set
+    set:
+      tolerations:
+        - key: "node-role.kubernetes.io/control-plane"
+          operator: "Exists"
+          effect: "NoSchedule"
+    asserts:
+      - contains:
+          path: spec.template.spec.tolerations
+          content:
+            key: "node-role.kubernetes.io/control-plane"
+            operator: "Exists"
+            effect: "NoSchedule"
+
+  - it: should apply affinity when set
+    set:
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: kubernetes.io/os
+                    operator: In
+                    values:
+                      - linux
+    asserts:
+      - isNotEmpty:
+          path: spec.template.spec.affinity
+
+  - it: should have standard labels on pod template
+    release:
+      name: my-release
+    asserts:
+      - equal:
+          path: spec.template.metadata.labels["app.kubernetes.io/name"]
+          value: kilo-clustermesh-operator
+      - equal:
+          path: spec.template.metadata.labels["app.kubernetes.io/instance"]
+          value: my-release
+
+  - it: should reference the correct serviceaccount
+    release:
+      name: my-release
+    asserts:
+      - equal:
+          path: spec.template.spec.serviceAccountName
+          value: my-release-kilo-clustermesh-operator
+
+  - it: should use custom serviceaccount name when specified
+    set:
+      serviceAccount.name: custom-sa
+    asserts:
+      - equal:
+          path: spec.template.spec.serviceAccountName
+          value: custom-sa
+
+  - it: should have imagePullPolicy set
+    set:
+      image.pullPolicy: Always
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].imagePullPolicy
+          value: Always
+
+  - it: should inject POD_NAMESPACE via downward API
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: POD_NAMESPACE
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.namespace
+
+  - it: should set seccompProfile to RuntimeDefault to satisfy PodSecurity restricted
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].securityContext.seccompProfile.type
+          value: RuntimeDefault
+
+  - it: should default image.repository to the cozystack fork
+    asserts:
+      - matchRegex:
+          path: spec.template.spec.containers[0].image
+          pattern: "^ghcr\\.io/cozystack/kilo-clustermesh-operator:"

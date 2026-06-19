@@ -1,5 +1,0 @@
-apiVersion: v2
-name: kilo
-description: Kilo WireGuard mesh for switchcloud tenant clusters (port of cozystack/packages/system/kilo)
-version: 0.1.0
-appVersion: "0.6.0"
