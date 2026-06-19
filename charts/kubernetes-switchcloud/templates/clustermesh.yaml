@@ -56,6 +56,9 @@ spec:
         - {{ . | quote }}
       {{- end }}
       {{- end }}
+      {{- if .persistentKeepalive }}
+      persistentKeepalive: {{ .persistentKeepalive }}
+      {{- end }}
     {{- end }}
     {{- if $hasLocalCluster }}
     - name: {{ $localCluster.name }}
@@ -72,6 +75,9 @@ spec:
       {{- range . }}
         - {{ . | quote }}
       {{- end }}
+      {{- end }}
+      {{- if $localCluster.persistentKeepalive }}
+      persistentKeepalive: {{ $localCluster.persistentKeepalive }}
       {{- end }}
     {{- end }}
 {{- end }}
