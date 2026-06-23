@@ -6,7 +6,7 @@ include ../../../hack/package.mk
 
 # Version of the upstream generic operator chart published to
 # oci://ghcr.io/cozystack/charts by the kilo-clustermesh-operator release.
-CHART_VERSION ?= 0.6.0
+CHART_VERSION ?= 0.7.0
 
 update:
 	rm -rf charts
