@@ -1,5 +1,5 @@
 apiVersion: v2
-appVersion: 0.6.2
+appVersion: 0.7.0
 description: Kubernetes ClusterMesh operator for Kilo - connects clusters via WireGuard
   mesh
 keywords:
@@ -13,4 +13,4 @@ maintainers:
   name: Arsolitt
 name: kilo-clustermesh-operator
 type: application
-version: 0.6.2
+version: 0.7.0
