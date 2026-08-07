@@ -346,6 +346,61 @@ addons:
 
 Set `minReplicas: 0` on node groups to enable scale-to-zero.
 
+## Per-node-group config patches (GPU and custom kernel)
+
+Every node group renders its own `TalosConfigTemplate`, and CAPI keys that template
+by a hash of its rendered spec. `nodeGroups.<name>.extraConfigPatches` appends extra
+Talos machine-config patches to a single group's template, so it changes only that
+group's hash. Sibling groups keep their existing template and are **not** rolled. This
+makes it safe to add GPU workers next to regular workers without a cluster-wide worker
+replacement.
+
+Patches are standard Talos config patches and apply after the chart's built-in ones,
+so `path: /machine/kernel/modules/-` appends to the base module list rather than
+replacing it.
+
+```yaml
+nodeGroups:
+  md0:                                    # regular workers — untouched, never rolled
+    flavorName: c004r008
+    imageName: "talos-openstack-amd64"
+    minReplicas: 1
+    maxReplicas: 5
+    resources:
+      cpu: 4
+      memory: 8Gi
+  gpu0:                                   # GPU workers
+    flavorName: g1.gpu                    # a Nova flavor with a GPU attached
+    imageName: "talos-openstack-amd64-nvidia"  # Talos image built WITH NVIDIA extensions
+    minReplicas: 0
+    maxReplicas: 3
+    resources:
+      cpu: 8
+      memory: 32Gi
+    extraConfigPatches:
+      - op: add
+        path: /machine/kernel/modules/-
+        value: { name: nvidia }
+      - op: add
+        path: /machine/kernel/modules/-
+        value: { name: nvidia_uvm }
+```
+
+`extraConfigPatches` only loads kernel modules; it does not build them. Two things
+must be provided outside the chart:
+
+1. A Talos Glance image that ships the NVIDIA system extensions
+   (`nonfree-kmod-nvidia`, `nvidia-container-toolkit`), referenced by the GPU group's
+   `imageName`. Build it at [factory.talos.dev](https://factory.talos.dev/) with those
+   extensions selected, or from the Cozystack Talos installer profile, then upload it.
+2. A Nova flavor with a GPU (PCI passthrough or vGPU) offered by the Switch Cloud
+   project, referenced by `flavorName`.
+
+Inside the tenant cluster, schedule GPU workloads with the NVIDIA device plugin (the
+container runtime comes from the `nvidia-container-toolkit` extension baked into the
+image); a full `gpu-operator` is not required because the kernel modules are supplied
+by the OS extension.
+
 ## Repository layout
 
 ```text
