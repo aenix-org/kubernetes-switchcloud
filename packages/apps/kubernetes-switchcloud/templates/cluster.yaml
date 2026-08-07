@@ -75,6 +75,20 @@ configPatches:
     path: /cluster/ca/crt
     value: {{ index $kamajiCA.data "tls.crt" }}
   {{- end }}
+  {{- with .group.extraConfigPatches }}
+  # Per-node-group Talos config patches, scoped to this group only. Each node
+  # group renders its own TalosConfigTemplate whose name embeds a hash of this
+  # rendered spec (see the range below), so setting extraConfigPatches on one
+  # group changes only that group's hash: sibling groups keep their existing
+  # TCT and are NOT rolled. Use this to enable GPU nodes (load NVIDIA kernel
+  # modules), add kernel args, or set extra sysctls on a single group without
+  # a cluster-wide worker replacement. Patches apply after the built-in ones
+  # above, so appending to the base module list works, e.g.
+  #   - op: add
+  #     path: /machine/kernel/modules/-
+  #     value: { name: nvidia }
+  {{- toYaml . | nindent 2 }}
+  {{- end }}
 {{- end }}
 
 {{/*
