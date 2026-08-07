@@ -109,6 +109,8 @@ nodeGroups:
     ## @param nodeGroups.md0.securityGroups OpenStack security groups
     securityGroups:
       - default
+    ## @param nodeGroups.md0.extraConfigPatches Extra Talos machine-config patches appended to THIS node group's TalosConfigTemplate only. Scoped per node group: because each group renders its own TalosConfigTemplate keyed by a hash of its spec, setting this on one group never rolls sibling groups. Patches apply after the chart's built-in ones, so `path: /machine/kernel/modules/-` appends to the base module list. Use for GPU nodes (load NVIDIA modules), extra kernel args, or per-group sysctls. Requires a matching `imageName` that ships the needed Talos system extensions.
+    extraConfigPatches: []
 
 ## @section Addons
 addons:
