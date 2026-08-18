@@ -2,7 +2,7 @@
 {{- $host := .Values._namespace.host }}
 {{- $clusterHostname := .Values.host | default (printf "%s.%s" .Release.Name $host) }}
 ---
-apiVersion: source.toolkit.fluxcd.io/v1beta2
+apiVersion: source.toolkit.fluxcd.io/v1
 kind: OCIRepository
 metadata:
   name: {{ .Release.Name }}-trustd
