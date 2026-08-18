@@ -1,6 +1,6 @@
 {{- if and .Values.addons.kilo.enabled .Values._namespace.etcd }}
 ---
-apiVersion: source.toolkit.fluxcd.io/v1beta2
+apiVersion: source.toolkit.fluxcd.io/v1
 kind: OCIRepository
 metadata:
   name: {{ .Release.Name }}-kilo

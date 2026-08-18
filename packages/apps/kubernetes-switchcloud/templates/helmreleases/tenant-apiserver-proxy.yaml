@@ -30,7 +30,7 @@ readiness probes and crashloop. Derive the correct first-IP from
 {{- $svcOctets := splitList "." $svcBase }}
 {{- $kubeSvcIP := printf "%s.%s.%s.1" (index $svcOctets 0) (index $svcOctets 1) (index $svcOctets 2) }}
 ---
-apiVersion: source.toolkit.fluxcd.io/v1beta2
+apiVersion: source.toolkit.fluxcd.io/v1
 kind: OCIRepository
 metadata:
   name: {{ .Release.Name }}-tenant-apiserver-proxy
