@@ -295,7 +295,14 @@ spec:
 {{- end }}
 {{- end }}
 {{- if .Values.openstack.network.externalNetworkID }}
-  externalNetworkId: {{ .Values.openstack.network.externalNetworkID }}
+  # CAPO v1beta1 replaced the v1alpha7 string field `externalNetworkId` with
+  # an `externalNetwork` object. The old key is not in the v1beta1 schema, so
+  # the apiserver drops it on persist: the OpenStackCluster ends up with no
+  # external network, CAPO falls back to auto-discovery, and reconciliation
+  # fails with "filter matched more than one resource" whenever the project
+  # has more than one router:external network.
+  externalNetwork:
+    id: {{ .Values.openstack.network.externalNetworkID | quote }}
 {{- end }}
   # CAPO-managed control + worker security groups with the k8s
   # baseline open (kubelet, etcd, kAPI, CNI, inter-node). Per-Service
