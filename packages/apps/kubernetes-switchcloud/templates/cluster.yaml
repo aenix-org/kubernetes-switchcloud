@@ -75,6 +75,21 @@ configPatches:
     path: /cluster/ca/crt
     value: {{ index $kamajiCA.data "tls.crt" }}
   {{- end }}
+  {{- with .group.nodeLabels }}
+  # Kubelet node labels for this group. Set via machine.nodeLabels so the
+  # kubelet registers the Node with them (arbitrary key=value labels, unlike
+  # `roles` which only yields valueless node-role.kubernetes.io/<role>). The
+  # same labels are published as cluster-autoscaler scale-from-zero capacity
+  # labels on the MachineDeployment (see capacity.cluster-autoscaler.kubernetes.io/labels
+  # below), driven from this one source so the real node label and the
+  # simulated scale-from-zero node label cannot drift. A pod pinned to this
+  # group by one of these labels can then trigger a scale-up even when the
+  # group sits at zero replicas.
+  - op: add
+    path: /machine/nodeLabels
+    value:
+      {{- toYaml . | nindent 6 }}
+  {{- end }}
   {{- with .group.extraConfigPatches }}
   # Per-node-group Talos config patches, scoped to this group only. Each node
   # group renders its own TalosConfigTemplate whose name embeds a hash of this
@@ -446,6 +461,25 @@ metadata:
     {{-   $effectiveCpuMillis := include "kubernetes-switchcloud.cpuToMillicores" $effectiveCpu | float64 }}
     {{-   $allocatableCpuMillis := subf $effectiveCpuMillis (addf $sysCpuMillis $kubeCpuMillis) | ceil | int }}
     capacity.cluster-autoscaler.kubernetes.io/cpu: "{{ $allocatableCpuMillis }}m"
+    {{- end }}
+    {{- /*
+    Scale-from-zero capacity hints. When a group sits at 0 replicas the
+    autoscaler has no real Node to template from and builds a simulated node
+    from these annotations. Without matching labels, a pod pinned to the group
+    (nodeAffinity/nodeSelector) never triggers a scale-up; without ephemeral-disk
+    a pod requesting ephemeral-storage reports Insufficient ephemeral-storage.
+    Labels come from the same $group.nodeLabels that machine.nodeLabels applies
+    to the real node, so the simulated and real labels stay in sync.
+    */}}
+    {{- with $group.nodeLabels }}
+    {{-   $pairs := list }}
+    {{-   range $k, $v := . }}
+    {{-     $pairs = append $pairs (printf "%s=%s" $k $v) }}
+    {{-   end }}
+    capacity.cluster-autoscaler.kubernetes.io/labels: "{{ join "," $pairs }}"
+    {{- end }}
+    {{- with $group.ephemeralDisk }}
+    capacity.cluster-autoscaler.kubernetes.io/ephemeral-disk: "{{ . }}"
     {{- end }}
 spec:
   clusterName: {{ $.Release.Name }}
