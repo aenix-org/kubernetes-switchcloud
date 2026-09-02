@@ -111,6 +111,10 @@ nodeGroups:
       - default
     ## @param nodeGroups.md0.extraConfigPatches Extra Talos machine-config patches appended to THIS node group's TalosConfigTemplate only. Scoped per node group: because each group renders its own TalosConfigTemplate keyed by a hash of its spec, setting this on one group never rolls sibling groups. Patches apply after the chart's built-in ones, so `path: /machine/kernel/modules/-` appends to the base module list. Use for GPU nodes (load NVIDIA modules), extra kernel args, or per-group sysctls. Requires a matching `imageName` that ships the needed Talos system extensions.
     extraConfigPatches: []
+    ## @param nodeGroups.md0.nodeLabels Arbitrary key=value kubelet node labels applied to this group's nodes (via Talos machine.nodeLabels) AND published as cluster-autoscaler scale-from-zero capacity labels on the MachineDeployment. Set this when workloads are pinned to the group by nodeAffinity/nodeSelector and the group must scale up from zero: the simulated scale-from-zero node then carries the same labels as the real node, so a pinned pod triggers a scale-up. Unlike `roles` (which only yields valueless `node-role.kubernetes.io/<role>`), these are full key=value labels. Changing this rolls only this node group.
+    nodeLabels: {}
+    ## @param nodeGroups.md0.ephemeralDisk Ephemeral-storage capacity advertised for scale-from-zero (e.g. "40Gi"), published as capacity.cluster-autoscaler.kubernetes.io/ephemeral-disk on the MachineDeployment. Set it to the actual allocatable ephemeral-storage of the node (rootVolume minus Talos/OS overhead) so a pod requesting ephemeral-storage can trigger a scale-up from zero. Left empty, the annotation is omitted (the autoscaler assumes zero ephemeral capacity for a zero-scaled group).
+    ephemeralDisk: ""
 
 ## @section Addons
 addons:
