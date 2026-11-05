@@ -159,8 +159,6 @@ spec:
       enabled: true
     metricsServer:
       enabled: true
-    providerIdSetter:
-      enabled: true
 ```
 
 Apply it:
@@ -320,31 +318,54 @@ spec:
 | `addons.cilium` | always on | CNI — required |
 | `addons.certManager.enabled` | `true` | cert-manager |
 | `addons.metricsServer.enabled` | `true` | HPA/VPA support |
-| `addons.providerIdSetter.enabled` | `false` | Required for Cluster Autoscaler |
-| `addons.clusterAutoscaler.enabled` | `false` | CAPI-based autoscaler |
 | `addons.ingressNginx.enabled` | `false` | ingress-nginx |
 | `addons.fluxcd.enabled` | `false` | FluxCD inside the tenant cluster |
-| `addons.openstackCCM.enabled` | `false` | OpenStack Cloud Controller Manager |
 | `addons.trustd.networkPolicy.allowCIDRs` | `[]` | Source CIDRs for talos-csr-signer (always enabled) |
+
+`provider-id-setter` and `talos-csr-signer` are always deployed (not
+optional). There is no in-tenant `clusterAutoscaler`, `providerIdSetter`
+or `openstackCCM` addon: the autoscaler runs outside the chart (see the
+section below) and no OpenStack CCM is needed with Cluster API.
 
 ## Cluster Autoscaler
 
-Requires `addons.providerIdSetter.enabled: true` — the autoscaler maps nodes to cloud instances
-via `spec.providerID`.
+The chart does **not** bundle a cluster-autoscaler. It prepares each node
+group for an external, Cluster API based autoscaler and leaves running
+the autoscaler itself to the operator.
 
-```yaml
-addons:
-  providerIdSetter:
-    enabled: true
-  clusterAutoscaler:
-    enabled: true
-    image: registry.k8s.io/autoscaling/cluster-autoscaler:v1.32.0  # match Kubernetes minor
-    scaleDownDelayAfterAdd: 10m
-    scaleDownUnneededTime: 10m
-    maxNodeProvisionTime: 20m
+What the chart already does for you:
+
+- `provider-id-setter` is always deployed (gated only on the tenant
+  having an etcd DataStore, not on an addon toggle), so every node gets
+  its `spec.providerID`, which the autoscaler needs to map Nodes to
+  Machines.
+- Each `MachineDeployment` carries the autoscaler bounds
+  (`cluster.x-k8s.io/cluster-api-autoscaler-node-group-min-size` and
+  `-max-size`) and scale-from-zero capacity hints
+  (`capacity.cluster-autoscaler.kubernetes.io/{cpu,memory,labels,ephemeral-disk}`),
+  derived from each group's `resources`, `nodeLabels` and `ephemeralDisk`.
+
+Run the upstream cluster-autoscaler yourself against the **management**
+cluster with `--cloud-provider=clusterapi`, scoped to a single cluster:
+
+```text
+--node-group-auto-discovery=clusterapi:namespace=<tenant-namespace>,clusterName=kubernetes-switchcloud-<cr-name>
 ```
 
-Set `minReplicas: 0` on node groups to enable scale-to-zero.
+Both keys are required. Several `KubernetesSwitchcloud` clusters can live
+in one tenant namespace, so `namespace=` alone does not isolate them:
+without `clusterName=` an autoscaler discovers sibling clusters'
+`MachineDeployment`s and scale-up breaks. `clusterName` is the Cluster
+object's own name (`kubernetes-switchcloud-<cr-name>`), not the bare
+namespace. When more than one autoscaler watches the same namespace,
+give each a unique `--lease-resource-name` and `--status-config-map-name`.
+
+Set `minReplicas: 0` on a node group to enable scale-to-zero, and set
+`nodeGroups.<name>.nodeLabels` and `ephemeralDisk` so a pod pinned by
+nodeSelector or affinity can trigger a scale-up from zero. Note that
+`minReplicas` also seeds `MachineDeployment.spec.replicas`: changing it
+on a live cluster overwrites the replica count the autoscaler manages,
+which then re-converges.
 
 ## Per-node-group config patches (GPU and custom kernel)
 
